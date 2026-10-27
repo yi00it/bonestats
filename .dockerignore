@@ -1,0 +1,9 @@
+.git
+.github
+/bonestats
+*.db
+*.db-shm
+*.db-wal
+/data/
+/docs/
+.env

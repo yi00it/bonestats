@@ -14,7 +14,35 @@
 
 bonestats runs as a single Go binary with one SQLite file. Its tracking script is about 1.2 KB gzipped, smaller than Plausible's, and also measures Core Web Vitals, scroll depth and time on page. The dashboard looks like an instrument panel: dot-matrix display type, LED-style meters and a single signal-red accent, in a light and a dark theme.
 
-## Quick start
+## Install with Docker
+
+On a server with Docker, a domain pointing at it, and ports 80 and 443 open:
+
+```sh
+mkdir bonestats && cd bonestats
+curl -fsSLO https://raw.githubusercontent.com/yi00it/bonestats/master/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/yi00it/bonestats/master/.env.example
+nano .env                                 # set BONESTATS_DOMAIN and BONESTATS_PASSWORD
+docker compose up -d
+```
+
+This runs bonestats behind [Caddy](https://caddyserver.com), which gets an HTTPS certificate automatically, so open `https://<your domain>` and log in. The image (`ghcr.io/yi00it/bonestats`, amd64 and arm64) includes the DB-IP Lite country database, and the data lives in the `bonestats-data` volume. To update: `docker compose pull && docker compose up -d`. To back up (keep backups private, see below):
+
+```sh
+docker compose stop bonestats && docker compose cp bonestats:/data/bonestats.db ./bonestats-backup.db && docker compose start bonestats
+```
+
+Already running a reverse proxy? Run only the image and point your proxy at it (see [Production deployment](#production-deployment)):
+
+```sh
+docker run -d --name bonestats --restart unless-stopped -p 127.0.0.1:8080:8080 \
+  -e BONESTATS_PASSWORD='choose-a-long-password' -e BONESTATS_PROXY_HEADER=X-Forwarded-For \
+  -v bonestats-data:/data ghcr.io/yi00it/bonestats
+```
+
+Prebuilt binaries for Linux, macOS, Windows and FreeBSD are on the [releases page](https://github.com/yi00it/bonestats/releases).
+
+## Build from source
 
 ```sh
 make geoip                                # optional: countries (DB-IP Lite, 8 MB)

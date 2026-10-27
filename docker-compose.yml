@@ -1,0 +1,47 @@
+# bonestats behind Caddy, which gets an HTTPS certificate for your domain
+# automatically. Point the domain's DNS at this server, open ports 80 and 443,
+# create a .env file next to this one (see .env.example) and run:
+#
+#   docker compose up -d
+
+services:
+  bonestats:
+    image: ghcr.io/yi00it/bonestats:${BONESTATS_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      BONESTATS_PASSWORD: ${BONESTATS_PASSWORD:?set BONESTATS_PASSWORD in .env (at least 12 characters)}
+      BONESTATS_TZ: ${BONESTATS_TZ:-UTC}
+      BONESTATS_RETENTION_DAYS: ${BONESTATS_RETENTION_DAYS:-365}
+      # Caddy overwrites X-Forwarded-For with the real client IP.
+      BONESTATS_PROXY_HEADER: X-Forwarded-For
+    volumes:
+      - bonestats-data:/data
+    # No ports: only reachable through Caddy.
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - bonestats
+
+configs:
+  caddyfile:
+    content: |
+      ${BONESTATS_DOMAIN:?set BONESTATS_DOMAIN in .env, e.g. stats.example.com} {
+      	reverse_proxy bonestats:8080
+      }
+
+volumes:
+  bonestats-data:
+  caddy-data:
+  caddy-config:
