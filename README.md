@@ -73,6 +73,7 @@ Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other 
 | `BONESTATS_TRUST_PROXY` / `-trust-proxy` | `false` | Deprecated, same as `BONESTATS_PROXY_HEADER=X-Forwarded-For`. |
 | `BONESTATS_ALLOW_HTTP` / `-allow-http` | `false` | Allow logging in over plain HTTP from hosts other than `localhost`. Only for a trusted private network: the password and login cookie are sent unencrypted. |
 | `BONESTATS_EVENT_RATE` / `-event-rate` | `120` | Beacons per minute accepted from one IP (IPv6: one /64), with bursts of the same size. More are dropped, so one client can't flood the database. `0` = unlimited. |
+| `BONESTATS_SOURCE_URL` / `-source-url` | `https://github.com/yi00it/bonestats` | Linked as "Source code" in the dashboard footer. If you run a modified version, point it at your source: the AGPL asks you to offer it to your users. |
 
 ## Production deployment
 
@@ -147,4 +148,4 @@ docs                       README images
 
 ## License
 
-bonestats is released under the [MIT License](LICENSE). The bundled [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) is MIT-licensed too; its license is in `internal/web/static/LICENSE.jsvectormap.txt`. The bundled [Geist](https://github.com/vercel/geist-font) and [Doto](https://github.com/oliverlalan/Doto) fonts are under the SIL Open Font License 1.1 (`internal/web/static/fonts/OFL-*.txt`). The DB-IP Lite data you download is CC BY 4.0.
+bonestats is Copyright (c) 2026 yi00it and released under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You can use, modify and self-host it freely; if you run a modified version as a network service, you must make your modified source available to its users. Versions released before the switch to AGPL remain available under the MIT License. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). The bundled [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) is MIT-licensed too; its license is in `internal/web/static/LICENSE.jsvectormap.txt`. The bundled [Geist](https://github.com/vercel/geist-font) and [Doto](https://github.com/oliverlalan/Doto) fonts are under the SIL Open Font License 1.1 (`internal/web/static/fonts/OFL-*.txt`). The DB-IP Lite data you download is CC BY 4.0.
