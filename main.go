@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // bonestats is a tiny, cookieless, privacy-friendly web analytics server.
 package main
 
@@ -55,6 +57,7 @@ func main() {
 		allowHTTP    = flag.Bool("allow-http", boolEnv("BONESTATS_ALLOW_HTTP"), "allow logging in over plain HTTP from hosts other than localhost")
 		eventRate    = flag.Int("event-rate", eventRateDefault, "beacons per minute accepted from one IP (0 = unlimited)")
 		passwordFile = flag.String("password-file", env("BONESTATS_PASSWORD_FILE", ""), "file holding the admin password, instead of BONESTATS_PASSWORD")
+		sourceURL    = flag.String("source-url", env("BONESTATS_SOURCE_URL", "https://github.com/yi00it/bonestats"), "where users can get the source code of this version (AGPL-3.0)")
 	)
 	flag.Parse()
 	if *retention < 0 {
@@ -114,6 +117,7 @@ func main() {
 		Retention:   *retention,
 		GeoEnabled:  geo.Enabled(),
 		Collector:   collector,
+		SourceURL:   *sourceURL,
 	}
 	httpServer := &http.Server{
 		Addr:              *addr,

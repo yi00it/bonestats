@@ -22,6 +22,9 @@
 {{/* The bonestats mark: a bone drawn on a dot matrix, with one lit LED. */}}
 {{define "mark"}}<svg class="mark" viewBox="0 0 32 12" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.6"/><circle cx="6" cy="2" r="1.6"/><circle cx="26" cy="2" r="1.6"/><circle class="led" cx="30" cy="2" r="1.6"/><circle cx="6" cy="6" r="1.6"/><circle cx="10" cy="6" r="1.6"/><circle cx="14" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="22" cy="6" r="1.6"/><circle cx="26" cy="6" r="1.6"/><circle cx="2" cy="10" r="1.6"/><circle cx="6" cy="10" r="1.6"/><circle cx="26" cy="10" r="1.6"/><circle cx="30" cy="10" r="1.6"/></g></svg>{{end}}
 
+{{/* The AGPL asks network services to offer their source to users. */}}
+{{define "source"}}<p><a href="{{source}}" rel="noopener">Source code</a> · AGPL-3.0</p>{{end}}
+
 {{define "logo"}}<span class="logo">{{template "mark"}}<span class="wordmark">bonestats</span></span>{{end}}
 
 {{define "nav"}}

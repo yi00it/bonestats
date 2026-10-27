@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package web serves the password-protected dashboard and static assets.
 package web
 
@@ -54,6 +56,7 @@ type Server struct {
 	Retention   int  // days, shown in the UI
 	GeoEnabled  bool // shows the DB-IP attribution
 	Collector   http.Handler
+	SourceURL   string // linked in the footer, as the AGPL asks of network services
 
 	tmpl      map[string]*template.Template
 	limiter   limiter
@@ -72,7 +75,7 @@ func (s *Server) Handler() http.Handler {
 
 	s.tmpl = map[string]*template.Template{}
 	for _, page := range []string{"dashboard", "sites", "goals", "login"} {
-		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL}).
+		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
 

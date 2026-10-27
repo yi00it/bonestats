@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package collect implements the public endpoint that receives beacons from
 // the tracking script and turns them into anonymous events.
 package collect

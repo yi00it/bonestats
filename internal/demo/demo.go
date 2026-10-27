@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package demo fills the database with realistic, made-up traffic so the
 // dashboard can be explored before any real site sends data.
 package demo

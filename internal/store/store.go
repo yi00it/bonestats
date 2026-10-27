@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package store owns the SQLite database: schema, writes from the collector,
 // and housekeeping (salt rotation, retention).
 package store
