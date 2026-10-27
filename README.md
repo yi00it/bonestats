@@ -127,4 +127,4 @@ internal/demo              demo data generator
 
 ## License
 
-bonestats is released under the [MIT License](LICENSE). The bundled uPlot and jsvectormap libraries are MIT-licensed too; the DB-IP Lite data you download is CC BY 4.0.
+bonestats is released under the [MIT License](LICENSE). The bundled [uPlot](https://github.com/leeoniya/uPlot) and [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) are MIT-licensed too; their licenses are in `internal/web/static/LICENSE.*.txt`. The DB-IP Lite data you download is CC BY 4.0.
