@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -82,33 +83,53 @@ const (
 	Month Interval = "month"
 )
 
-// bucket returns the SQL expression mapping a unix time column to a bucket
-// number, and the matching Go functions. All use a fixed timezone offset.
-func (iv Interval) bucket(col string, off int64) (expr string, args []any, key func(int64) int64, start func(int64) int64) {
+// starts returns the start of every bucket overlapping [from, to). Buckets
+// follow the local calendar of loc, so days stay aligned across DST changes.
+func (iv Interval) starts(from, to time.Time, loc *time.Location) []time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	f := from.In(loc)
+	midnight := time.Date(f.Year(), f.Month(), f.Day(), 0, 0, 0, 0, loc)
+	var t time.Time
+	var next func(time.Time) time.Time
 	switch iv {
 	case Hour:
-		return "(" + col + " + ?) / 3600", []any{off},
-			func(t int64) int64 { return (t + off) / 3600 },
-			func(k int64) int64 { return k*3600 - off }
-	case Week: // weeks start on Monday; day 0 of the epoch was a Thursday
-		return "((" + col + " + ?) / 86400 + 3) / 7", []any{off},
-			func(t int64) int64 { return ((t+off)/86400 + 3) / 7 },
-			func(k int64) int64 { return (k*7-3)*86400 - off }
+		t = time.Date(f.Year(), f.Month(), f.Day(), f.Hour(), 0, 0, 0, loc)
+		next = func(t time.Time) time.Time { return t.Add(time.Hour) }
+	case Week: // weeks start on Monday
+		t = midnight.AddDate(0, 0, -((int(midnight.Weekday()) + 6) % 7))
+		next = func(t time.Time) time.Time { return t.AddDate(0, 0, 7) }
 	case Month:
-		return "CAST(strftime('%Y', " + col + " + ?, 'unixepoch') AS INTEGER) * 12 + CAST(strftime('%m', " + col + " + ?, 'unixepoch') AS INTEGER) - 1",
-			[]any{off, off},
-			func(t int64) int64 {
-				u := time.Unix(t+off, 0).UTC()
-				return int64(u.Year())*12 + int64(u.Month()) - 1
-			},
-			func(k int64) int64 {
-				return time.Date(int(k/12), time.Month(k%12+1), 1, 0, 0, 0, 0, time.UTC).Unix() - off
-			}
+		t = time.Date(f.Year(), f.Month(), 1, 0, 0, 0, 0, loc)
+		next = func(t time.Time) time.Time { return t.AddDate(0, 1, 0) }
 	default:
-		return "(" + col + " + ?) / 86400", []any{off},
-			func(t int64) int64 { return (t + off) / 86400 },
-			func(k int64) int64 { return k*86400 - off }
+		t = midnight
+		next = func(t time.Time) time.Time { return t.AddDate(0, 0, 1) }
 	}
+	var out []time.Time
+	for ; t.Before(to); t = next(t) {
+		out = append(out, t)
+	}
+	return out
+}
+
+// bucketTable is the CTE b(k, lo, hi) listing the buckets as [lo, hi) unix
+// ranges; k is the bucket's index in starts.
+const bucketTable = `WITH b AS (SELECT CAST(key AS INTEGER) AS k, json_extract(value, '$[0]') AS lo,
+	json_extract(value, '$[1]') AS hi FROM json_each(?)) `
+
+func bucketRanges(starts []time.Time, to time.Time) string {
+	r := make([][2]int64, len(starts))
+	for i, t := range starts {
+		end := to
+		if i+1 < len(starts) {
+			end = starts[i+1]
+		}
+		r[i] = [2]int64{t.Unix(), end.Unix()}
+	}
+	b, _ := json.Marshal(r)
+	return string(b)
 }
 
 // Series holds chart data: bucket start times and one value list per metric.
@@ -119,49 +140,49 @@ type Series struct {
 
 func (s *Store) Timeseries(ctx context.Context, q Query, iv Interval) (Series, error) {
 	type agg struct{ visitors, visits, bounces, dur, pageviews float64 }
-	got := map[int64]*agg{}
-	get := func(k int64) *agg {
-		if got[k] == nil {
-			got[k] = &agg{}
-		}
-		return got[k]
-	}
+	starts := iv.starts(q.From, q.To, q.Location)
+	got := make([]agg, len(starts))
+	ranges := bucketRanges(starts, q.To)
 
-	expr, bargs, key, start := iv.bucket("s.started_at", q.Offset)
 	from, args := q.sessionScope()
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+expr+` AS b, COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0),
-			COALESCE(SUM(s.last_seen - s.started_at), 0) `+from+` GROUP BY b`, append(bargs, args...)...)
+	from = strings.Replace(from, "FROM sessions s WHERE ",
+		"FROM b CROSS JOIN sessions s WHERE s.started_at >= b.lo AND s.started_at < b.hi AND ", 1)
+	rows, err := s.db.QueryContext(ctx, bucketTable+`
+		SELECT b.k, COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0),
+			COALESCE(SUM(s.last_seen - s.started_at), 0) `+from+` GROUP BY b.k`, append([]any{ranges}, args...)...)
 	if err != nil {
 		return Series{}, err
 	}
 	for rows.Next() {
-		var k int64
+		var k int
 		var a agg
 		if err := rows.Scan(&k, &a.visitors, &a.visits, &a.bounces, &a.dur); err != nil {
 			rows.Close()
 			return Series{}, err
 		}
-		p := get(k)
-		p.visitors, p.visits, p.bounces, p.dur = a.visitors, a.visits, a.bounces, a.dur
+		got[k] = a
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Series{}, err
+	}
 
-	expr, bargs, _, _ = iv.bucket("e.ts", q.Offset)
 	from, args = q.eventScope()
-	rows, err = s.db.QueryContext(ctx, `SELECT `+expr+` AS b, COUNT(*) `+from+` AND e.name = 'pageview' GROUP BY b`,
-		append(bargs, args...)...)
+	from = strings.Replace(from, "FROM events e ", "FROM b CROSS JOIN events e ", 1)
+	from = strings.Replace(from, " WHERE ", " WHERE e.ts >= b.lo AND e.ts < b.hi AND ", 1)
+	rows, err = s.db.QueryContext(ctx, bucketTable+`SELECT b.k, COUNT(*) `+from+` AND e.name = 'pageview' GROUP BY b.k`,
+		append([]any{ranges}, args...)...)
 	if err != nil {
 		return Series{}, err
 	}
 	for rows.Next() {
-		var k int64
+		var k int
 		var n float64
 		if err := rows.Scan(&k, &n); err != nil {
 			rows.Close()
 			return Series{}, err
 		}
-		get(k).pageviews = n
+		got[k].pageviews = n
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -175,12 +196,8 @@ func (s *Store) Timeseries(ctx context.Context, q Query, iv Interval) (Series, e
 		return x / y
 	}
 	out := Series{Values: map[string][]float64{}}
-	for k := key(q.From.Unix()); k <= key(q.To.Unix()-1); k++ {
-		a := got[k]
-		if a == nil {
-			a = &agg{}
-		}
-		out.Times = append(out.Times, start(k))
+	for i, a := range got {
+		out.Times = append(out.Times, starts[i].Unix())
 		out.Values["visitors"] = append(out.Values["visitors"], a.visitors)
 		out.Values["visits"] = append(out.Values["visits"], a.visits)
 		out.Values["pageviews"] = append(out.Values["pageviews"], a.pageviews)

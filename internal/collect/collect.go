@@ -91,7 +91,11 @@ func (c *Collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxBody)).Decode(&p); err != nil {
 		return
 	}
-	if err := c.handle(r.Context(), r, ua, p); err != nil && !errors.Is(err, errDropped) {
+	// Beacons sent while a page unloads often disconnect before the reply;
+	// that must not cancel the write.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+	defer cancel()
+	if err := c.handle(ctx, r, ua, p); err != nil && !errors.Is(err, errDropped) {
 		log.Printf("collect: %v", err)
 	}
 }
@@ -111,7 +115,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ua string, p pa
 	}
 
 	now := time.Now()
-	visitor, err := c.visitorHash(ctx, now, domain, clientIP(r, c.TrustProxy), ua)
+	visitor, err := c.visitorHash(ctx, now, domain, ClientIP(r, c.TrustProxy), ua)
 	if err != nil {
 		return err
 	}
@@ -156,7 +160,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ua string, p pa
 	// Visit attributes are only stored when this event starts a new visit.
 	refHost, refURL := referrer(p.Referrer, domain)
 	browser, os := parseBrowser(ua), parseOS(ua)
-	loc := c.Geo.Lookup(clientIP(r, c.TrustProxy))
+	loc := c.Geo.Lookup(ClientIP(r, c.TrustProxy))
 	e.Visit = store.Visit{
 		Referrer:       refHost,
 		ReferrerURL:    refURL,
@@ -238,15 +242,21 @@ func (c *Collector) dailySalt(ctx context.Context, now time.Time) ([]byte, error
 	return salt, nil
 }
 
-func clientIP(r *http.Request, trustProxy bool) netip.Addr {
+// ClientIP returns the visitor's IP. Behind a trusted reverse proxy it is
+// the last X-Forwarded-For entry, the one the proxy itself appended: earlier
+// entries come from the client and can be forged.
+func ClientIP(r *http.Request, trustProxy bool) netip.Addr {
 	if trustProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			first, _, _ := strings.Cut(xff, ",")
-			if ip, err := netip.ParseAddr(strings.TrimSpace(first)); err == nil {
+		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
+			last := xff[len(xff)-1]
+			if i := strings.LastIndexByte(last, ','); i >= 0 {
+				last = last[i+1:]
+			}
+			if ip, err := netip.ParseAddr(strings.TrimSpace(last)); err == nil {
 				return ip.Unmap()
 			}
 		}
-		if ip, err := netip.ParseAddr(r.Header.Get("X-Real-IP")); err == nil {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); err == nil {
 			return ip.Unmap()
 		}
 	}

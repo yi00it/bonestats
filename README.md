@@ -43,13 +43,13 @@ Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other 
 
 | Env var / flag | Default | |
 |---|---|---|
-| `BONESTATS_PASSWORD` | (required) | Admin password, at least 8 characters |
+| `BONESTATS_PASSWORD` | (required) | Admin password, at least 8 characters. Changing it logs out every session. After 10 wrong attempts from one IP, logins from it are blocked for 15 minutes. |
 | `BONESTATS_ADDR` / `-addr` | `:8080` | Listen address |
 | `BONESTATS_DB` / `-db` | `bonestats.db` | SQLite file |
 | `BONESTATS_GEOIP` / `-geoip` | (off) | Path to a country `.mmdb` (DB-IP Lite or MaxMind) |
 | `BONESTATS_RETENTION_DAYS` / `-retention` | `365` | Delete data older than N days (`0` = keep forever) |
 | `BONESTATS_TZ` / `-tz` | `Local` | Timezone for dashboard days, e.g. `Europe/Berlin` |
-| `BONESTATS_TRUST_PROXY` / `-trust-proxy` | `false` | Read the client IP from `X-Forwarded-For` (only behind your own reverse proxy) |
+| `BONESTATS_TRUST_PROXY` / `-trust-proxy` | `false` | Read the client IP from the last `X-Forwarded-For` entry, the one your reverse proxy adds (only behind your own reverse proxy). With a chain of proxies, e.g. a CDN in front of nginx, make the last one set the real client IP. |
 
 ## What is collected
 

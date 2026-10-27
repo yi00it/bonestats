@@ -1,6 +1,8 @@
 package collect
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"testing"
@@ -87,5 +89,37 @@ func TestGeo(t *testing.T) {
 	defer g.Close()
 	if loc := g.Lookup(netip.MustParseAddr("8.8.8.8")); loc.Country != "US" {
 		t.Errorf("8.8.8.8 = %+v, want US", loc)
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	req := func(remote string, headers map[string][]string) *http.Request {
+		r := httptest.NewRequest("POST", "/api/event", nil)
+		r.RemoteAddr = remote
+		for k, vs := range headers {
+			for _, v := range vs {
+				r.Header.Add(k, v)
+			}
+		}
+		return r
+	}
+	cases := []struct {
+		name  string
+		r     *http.Request
+		trust bool
+		want  string
+	}{
+		{"direct", req("203.0.113.9:5000", nil), false, "203.0.113.9"},
+		{"untrusted header ignored", req("203.0.113.9:5000", map[string][]string{"X-Forwarded-For": {"1.2.3.4"}}), false, "203.0.113.9"},
+		{"proxy", req("127.0.0.1:5000", map[string][]string{"X-Forwarded-For": {"198.51.100.7"}}), true, "198.51.100.7"},
+		{"forged entry skipped", req("127.0.0.1:5000", map[string][]string{"X-Forwarded-For": {"6.6.6.6, 198.51.100.7"}}), true, "198.51.100.7"},
+		{"forged header line skipped", req("127.0.0.1:5000", map[string][]string{"X-Forwarded-For": {"6.6.6.6", "198.51.100.7"}}), true, "198.51.100.7"},
+		{"x-real-ip", req("127.0.0.1:5000", map[string][]string{"X-Real-Ip": {"198.51.100.8"}}), true, "198.51.100.8"},
+		{"ipv4-mapped", req("[::ffff:203.0.113.9]:5000", nil), false, "203.0.113.9"},
+	}
+	for _, c := range cases {
+		if got := ClientIP(c.r, c.trust).String(); got != c.want {
+			t.Errorf("%s: got %s, want %s", c.name, got, c.want)
+		}
 	}
 }

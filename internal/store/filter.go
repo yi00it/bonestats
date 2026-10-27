@@ -84,15 +84,15 @@ func ParseFilter(s string) (Filter, bool) {
 
 func (f Filter) String() string { return f.Dim + "|" + f.Op + "|" + f.Value }
 
-// Query selects one site, a time window and optional filters. Offset is the
-// timezone offset in seconds used to align buckets with local days/hours.
+// Query selects one site, a time window and optional filters. Location is the
+// timezone whose calendar days, weeks and months the time series follows.
 type Query struct {
-	SiteID  int64
-	From    time.Time
-	To      time.Time
-	Offset  int64
-	Filters []Filter
-	Goals   []Goal // used to resolve goal filters
+	SiteID   int64
+	From     time.Time
+	To       time.Time
+	Location *time.Location
+	Filters  []Filter
+	Goals    []Goal // used to resolve goal filters
 }
 
 // WithoutGoalFilters returns q minus its goal filters (the baseline for

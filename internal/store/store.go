@@ -3,6 +3,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -18,7 +19,7 @@ import (
 // SessionTimeout is the inactivity gap after which a new visit starts.
 const SessionTimeout = 30 * time.Minute
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 type Store struct {
 	db *sql.DB
@@ -125,6 +126,13 @@ CREATE TABLE IF NOT EXISTS salts (
 CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value BLOB NOT NULL
+);
+
+-- Admin logins: sha256 of the cookie token, so a leaked database can't be
+-- used to log in.
+CREATE TABLE IF NOT EXISTS logins (
+	token_hash BLOB PRIMARY KEY,
+	expires    INTEGER NOT NULL
 );
 `
 
@@ -611,7 +619,7 @@ func (s *Store) DailySalt(ctx context.Context, day string) ([]byte, error) {
 }
 
 // Secret returns a persistent random secret stored under key, generating it
-// on first use. Used to sign the admin login cookie.
+// on first use.
 func (s *Store) Secret(ctx context.Context, key string) ([]byte, error) {
 	var v []byte
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
@@ -629,6 +637,53 @@ func (s *Store) Secret(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 	return s.Secret(ctx, key)
+}
+
+// ---- admin logins ----
+
+func (s *Store) AddLogin(ctx context.Context, tokenHash []byte, expires time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM logins WHERE expires < ?`, time.Now().Unix()); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO logins(token_hash, expires) VALUES(?, ?)`, tokenHash, expires.Unix())
+	return err
+}
+
+func (s *Store) LoginValid(ctx context.Context, tokenHash []byte) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM logins WHERE token_hash = ? AND expires >= ?`,
+		tokenHash, time.Now().Unix()).Scan(&n)
+	return n > 0, err
+}
+
+func (s *Store) DeleteLogin(ctx context.Context, tokenHash []byte) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM logins WHERE token_hash = ?`, tokenHash)
+	return err
+}
+
+// CheckPassword ends every login when the admin password has changed since
+// the last start. fingerprint is a slow hash of the password.
+func (s *Store) CheckPassword(ctx context.Context, fingerprint []byte) (changed bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var old []byte
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'password_fingerprint'`).Scan(&old)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if bytes.Equal(old, fingerprint) {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM logins`); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO settings(key, value) VALUES('password_fingerprint', ?)`, fingerprint); err != nil {
+		return false, err
+	}
+	return old != nil, tx.Commit()
 }
 
 // ---- retention ----

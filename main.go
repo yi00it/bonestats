@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/pbkdf2"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"log"
@@ -31,16 +33,26 @@ func main() {
 		runDemo(os.Args[2:])
 		return
 	}
-	retentionDefault, _ := strconv.Atoi(env("BONESTATS_RETENTION_DAYS", "365"))
+	retentionDefault, err := strconv.Atoi(env("BONESTATS_RETENTION_DAYS", "365"))
+	if err != nil {
+		log.Fatalf("BONESTATS_RETENTION_DAYS must be a whole number of days, got %q", os.Getenv("BONESTATS_RETENTION_DAYS"))
+	}
+	trustProxyDefault, err := strconv.ParseBool(env("BONESTATS_TRUST_PROXY", "false"))
+	if err != nil {
+		log.Fatalf("BONESTATS_TRUST_PROXY must be true or false, got %q", os.Getenv("BONESTATS_TRUST_PROXY"))
+	}
 	var (
 		addr       = flag.String("addr", env("BONESTATS_ADDR", ":8080"), "listen address")
 		dbPath     = flag.String("db", env("BONESTATS_DB", "bonestats.db"), "SQLite database file")
 		geoPath    = flag.String("geoip", env("BONESTATS_GEOIP", ""), "optional DB-IP/MaxMind country .mmdb file")
 		retention  = flag.Int("retention", retentionDefault, "delete data older than this many days (0 = keep forever)")
 		tz         = flag.String("tz", env("BONESTATS_TZ", "Local"), "timezone for days in the dashboard, e.g. Europe/Berlin")
-		trustProxy = flag.Bool("trust-proxy", env("BONESTATS_TRUST_PROXY", "") == "true", "read client IP from X-Forwarded-For")
+		trustProxy = flag.Bool("trust-proxy", trustProxyDefault, "read client IP from X-Forwarded-For")
 	)
 	flag.Parse()
+	if *retention < 0 {
+		log.Fatal("retention must be 0 (keep forever) or a positive number of days")
+	}
 
 	password := os.Getenv("BONESTATS_PASSWORD")
 	if len(password) < 8 {
@@ -63,15 +75,26 @@ func main() {
 	}
 	defer geo.Close()
 
-	secret, err := st.Secret(context.Background(), "cookie_secret")
+	// Changing the password ends every existing login. Only a slow hash of
+	// it is stored, to notice the change.
+	salt, err := st.Secret(context.Background(), "cookie_secret")
 	if err != nil {
 		log.Fatalf("secret: %v", err)
+	}
+	fingerprint, err := pbkdf2.Key(sha256.New, password, salt, 600_000, 32)
+	if err != nil {
+		log.Fatalf("password: %v", err)
+	}
+	if changed, err := st.CheckPassword(context.Background(), fingerprint); err != nil {
+		log.Fatalf("password: %v", err)
+	} else if changed {
+		log.Print("admin password changed: logged out all sessions")
 	}
 
 	srv := &web.Server{
 		Store:      st,
 		Password:   password,
-		Secret:     secret,
+		TrustProxy: *trustProxy,
 		Location:   loc,
 		Retention:  *retention,
 		GeoEnabled: geo.Enabled(),

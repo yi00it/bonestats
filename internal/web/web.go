@@ -2,11 +2,10 @@
 package web
 
 import (
-	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
-	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -18,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"bonestats/internal/collect"
 	"bonestats/internal/store"
 )
 
@@ -30,16 +30,19 @@ var staticFS embed.FS
 const cookieName = "bs_auth"
 const sessionLength = 30 * 24 * time.Hour
 
+var failDelay = time.Second
+
 type Server struct {
 	Store      *store.Store
 	Password   string
-	Secret     []byte // signs the login cookie
+	TrustProxy bool // read the client IP from X-Forwarded-For (login rate limit)
 	Location   *time.Location
 	Retention  int  // days, shown in the UI
 	GeoEnabled bool // shows the DB-IP attribution
 	Collector  http.Handler
 
-	tmpl map[string]*template.Template
+	tmpl    map[string]*template.Template
+	limiter limiter
 }
 
 func (s *Server) Handler() http.Handler {
@@ -77,26 +80,23 @@ func (s *Server) Handler() http.Handler {
 
 // ---- auth ----
 
-func (s *Server) sign(expiry int64) string {
-	m := hmac.New(sha256.New, s.Secret)
-	fmt.Fprintf(m, "%d", expiry)
-	return fmt.Sprintf("%d.%s", expiry, hex.EncodeToString(m.Sum(nil)))
+// A login is a random token in the cookie; the server keeps only its hash, so
+// logging out (or changing the password) ends it for good.
+func tokenHash(token string) []byte {
+	h := sha256.Sum256([]byte(token))
+	return h[:]
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
 	c, err := r.Cookie(cookieName)
+	if err != nil || c.Value == "" {
+		return false
+	}
+	ok, err := s.Store.LoginValid(r.Context(), tokenHash(c.Value))
 	if err != nil {
-		return false
+		log.Printf("auth: %v", err)
 	}
-	exp, _, ok := strings.Cut(c.Value, ".")
-	if !ok {
-		return false
-	}
-	expiry, err := strconv.ParseInt(exp, 10, 64)
-	if err != nil || time.Now().Unix() > expiry {
-		return false
-	}
-	return hmac.Equal([]byte(c.Value), []byte(s.sign(expiry)))
+	return ok
 }
 
 func (s *Server) auth(h http.HandlerFunc) http.Handler {
@@ -114,26 +114,47 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	ip := collect.ClientIP(r, s.TrustProxy)
+	if s.limiter.blocked(ip) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		s.render(w, "login", map[string]any{"Title": "Log in", "Error": "Too many failed attempts. Try again in a few minutes."})
+		return
+	}
 	pw := r.PostFormValue("password")
 	if subtle.ConstantTimeCompare([]byte(pw), []byte(s.Password)) != 1 {
-		time.Sleep(time.Second) // slow down guessing
+		s.limiter.fail(ip)
+		time.Sleep(failDelay) // slow down guessing
 		w.WriteHeader(http.StatusUnauthorized)
 		s.render(w, "login", map[string]any{"Title": "Log in", "Error": "Wrong password."})
 		return
 	}
-	expiry := time.Now().Add(sessionLength).Unix()
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.sign(expiry), Path: "/",
-		MaxAge: int(sessionLength.Seconds()), HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-		SameSite: http.SameSiteStrictMode,
-	})
+	s.limiter.reset(ip)
+	token := rand.Text()
+	if err := s.Store.AddLogin(r.Context(), tokenHash(token), time.Now().Add(sessionLength)); err != nil {
+		serverError(w, err)
+		return
+	}
+	http.SetCookie(w, s.cookie(r, token, int(sessionLength.Seconds())))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+		if err := s.Store.DeleteLogin(r.Context(), tokenHash(c.Value)); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	http.SetCookie(w, s.cookie(r, "", -1))
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (s *Server) cookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name: cookieName, Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteStrictMode,
+	}
 }
 
 // ---- sites ----

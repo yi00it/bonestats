@@ -255,7 +255,6 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, label := window(qs.Get("range"), qs.Get("from"), qs.Get("to"), now, first)
 	iv := interval(from, to)
-	_, offset := now.Zone()
 
 	var filters []store.Filter
 	var chips []chip
@@ -268,7 +267,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		d, _ := store.DimensionByKey(f.Dim)
 		chips = append(chips, chip{d.Label + " " + opLabels[f.Op] + " " + f.Value, n.RemoveFilter(i)})
 	}
-	q := store.Query{SiteID: site.ID, From: from, To: to, Offset: int64(offset), Filters: filters, Goals: goals}
+	q := store.Query{SiteID: site.ID, From: from, To: to, Location: s.Location, Filters: filters, Goals: goals}
 
 	d := &dashData{ctx: ctx, s: s, q: q, n: n}
 
