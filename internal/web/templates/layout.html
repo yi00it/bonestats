@@ -4,7 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#e8e8e4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
 <title>{{.Title}} · bonestats</title>
+<link rel="icon" href="{{static "favicon.svg"}}" type="image/svg+xml">
+<link rel="preload" href="{{static "fonts/doto.woff2"}}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{static "fonts/geist-mono.woff2"}}" as="font" type="font/woff2" crossorigin>
+<script src="{{static "theme.js"}}"></script>
 <link rel="stylesheet" href="{{static "app.css"}}">
 {{block "head" .}}{{end}}
 </head>
@@ -13,22 +19,32 @@
 </body>
 </html>{{end}}
 
+{{/* The bonestats mark: a bone drawn on a dot matrix, with one lit LED. */}}
+{{define "mark"}}<svg class="mark" viewBox="0 0 32 12" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.6"/><circle cx="6" cy="2" r="1.6"/><circle cx="26" cy="2" r="1.6"/><circle class="led" cx="30" cy="2" r="1.6"/><circle cx="6" cy="6" r="1.6"/><circle cx="10" cy="6" r="1.6"/><circle cx="14" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="22" cy="6" r="1.6"/><circle cx="26" cy="6" r="1.6"/><circle cx="2" cy="10" r="1.6"/><circle cx="6" cy="10" r="1.6"/><circle cx="26" cy="10" r="1.6"/><circle cx="30" cy="10" r="1.6"/></g></svg>{{end}}
+
+{{define "logo"}}<span class="logo">{{template "mark"}}<span class="wordmark">bonestats</span></span>{{end}}
+
 {{define "nav"}}
 <header class="top">
-  <a href="/" class="logo">bone<span>stats</span></a>
+  <a href="/" class="home" aria-label="bonestats dashboard">{{template "logo"}}</a>
   <nav>
     <a href="/sites">Sites</a>
     <form method="post" action="/logout"><button class="link">Log out</button></form>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch between light and dark mode" title="Light / dark">
+      <svg class="sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>
+      <svg class="moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg>
+    </button>
   </nav>
 </header>
 {{end}}
 
-{{/* A breakdown table. Clicking a row filters the dashboard by it. */}}
+{{/* A breakdown table with a dot meter per row. Clicking a row filters the
+     dashboard by it. */}}
 {{define "table"}}
 {{if .Rows}}
 <table class="bars">
   <thead><tr>
-    <th>{{.Title}}</th><th class="n">Visitors</th><th class="n">{{.Head}}</th>
+    <th>{{.Title}}</th><th class="meter" aria-hidden="true"></th><th class="n">Visitors</th><th class="n">{{.Head}}</th>
     {{if .HasCR}}<th class="n" title="Conversion rate">CR</th>{{end}}
     {{if .Pages}}<th class="n opt" title="Average time visible per pageview">Time</th><th class="n opt" title="Average scroll depth">Scroll</th>{{end}}
   </tr></thead>
@@ -36,6 +52,7 @@
   {{range .Rows}}
   <tr style="--w: {{printf "%.1f" .Percent}}%">
     <td class="label"><a href="{{.Link}}" title="Filter by {{.Label}}"{{if eq $.Dim "country"}} data-country="{{.Label}}"{{end}}>{{.Label}}</a>{{with .Hint}} <small>{{.}}</small>{{end}}</td>
+    <td class="meter" aria-hidden="true"><i></i></td>
     <td class="n">{{num .Visitors}}</td><td class="n">{{num .Count}}</td>
     {{if $.HasCR}}<td class="n">{{with .CR}}{{pct1 (deref .)}}{{else}}–{{end}}</td>{{end}}
     {{if $.Pages}}
@@ -46,18 +63,19 @@
   {{end}}
   </tbody>
 </table>
-{{else}}<p class="empty">No data for this period</p>{{end}}
+{{else}}<p class="empty">No signal for this period.</p>{{end}}
 {{end}}
 
-{{/* A card with CSS-only tabs (radio buttons), one breakdown per tab. */}}
+{{/* A panel with CSS-only tabs (radio buttons), one breakdown per tab. The
+     radios come first so the labels and panels can follow them with ~. */}}
 {{define "tabs"}}
-<h2>{{.Title}}</h2>
 <div class="tabs">
   {{$name := .Name}}
-  {{range $i, $c := .Cards}}
-  <input type="radio" name="{{$name}}" id="{{$name}}-{{$i}}" {{if eq $i 0}}checked{{end}}>
-  <label for="{{$name}}-{{$i}}">{{$c.Title}}</label>
-  {{end}}
+  {{range $i, $c := .Cards}}<input type="radio" name="{{$name}}" id="{{$name}}-{{$i}}" {{if eq $i 0}}checked{{end}}>{{end}}
+  <div class="card-head">
+    <h2>{{.Title}}</h2>
+    <div class="tablist">{{range $i, $c := .Cards}}<label for="{{$name}}-{{$i}}">{{$c.Title}}</label>{{end}}</div>
+  </div>
   {{range .Cards}}<div class="panel">{{template "table" .}}</div>{{end}}
 </div>
 {{end}}

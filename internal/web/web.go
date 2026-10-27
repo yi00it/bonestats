@@ -345,8 +345,9 @@ var funcs = template.FuncMap{
 			return "poor"
 		}
 	},
-	"deref": func(p *float64) float64 { return *p },
-	"money": money,
+	"vitalPos": vitalPos,
+	"deref":    func(p *float64) float64 { return *p },
+	"money":    money,
 	"dict": func(kv ...any) map[string]any {
 		m := map[string]any{}
 		for i := 0; i+1 < len(kv); i += 2 {

@@ -1,6 +1,18 @@
-# bonestats
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img src="docs/logo-light.png" alt="bonestats" width="480">
+  </picture>
+</p>
 
-A tiny, cookieless, self-hosted web analytics server. It runs as a single Go binary with one SQLite file, and the tracking script is about 1.2 KB gzipped, smaller than Plausible's, while also measuring Core Web Vitals, scroll depth and time on page.
+<p align="center">
+  A tiny, cookieless, self-hosted web analytics server.<br>
+  One Go binary, one SQLite file, a 1.2 KB tracking script.
+</p>
+
+![The bonestats dashboard in light mode](docs/dashboard.png)
+
+bonestats runs as a single Go binary with one SQLite file. Its tracking script is about 1.2 KB gzipped, smaller than Plausible's, and also measures Core Web Vitals, scroll depth and time on page. The dashboard looks like an instrument panel: dot-matrix display type, LED-style meters and a single signal-red accent, in a light and a dark theme.
 
 ## Quick start
 
@@ -22,6 +34,8 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 
 ## Dashboard
 
+![Pages, sources and locations](docs/breakdowns.png)
+
 - **Metrics:** unique visitors, visits, pageviews, views per visit, bounce rate and visit duration. Each is compared with the previous period or the previous year, and you can click any of them to chart it.
 - **Date ranges:** today, yesterday, 7/28/30/91 days, month to date, last month, year to date, 12 months, all time and custom.
 - **Filters:** click any row (a page, source, country, browser…) to filter the whole dashboard, or use **+ Filter** for "is", "is not" and "contains". Filters live in the URL, so every view can be bookmarked.
@@ -32,6 +46,11 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 - **Goals** (set them up on Sites → Goals & funnels): custom event goals, pageview goals with `*` wildcards, conversion rate and revenue. With a goal filter on, every breakdown shows a CR column.
 - **Properties** of custom events, broken down by value (and revenue).
 - **Funnels:** 2 to 8 goals that visitors must complete in order within one visit, with the drop-off at each step.
+- **Web performance:** the 75th percentile of LCP, INP, CLS, FCP and TTFB from real visitors, rated good, needs improvement or poor, overall and per page.
+- **Live:** the dashboard refreshes every 15 seconds while it's open and shows how many visitors are online. Numbers that changed flicker to their new value; open tabs and your scroll position are kept.
+- **Light and dark:** follows your system setting, or pick one with the switch in the header (remembered in your browser).
+
+![Funnel and web performance](docs/funnel-vitals.png)
 
 Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other sites, `bs.downloads.js` tracks file downloads, and `bs.downloads.outbound.js` does both.
 
@@ -121,10 +140,11 @@ Beacon fields: `d` domain, `n` name, `p` path, `w` viewport width, `r` referrer,
 main.go                    config, startup, retention job
 internal/store             SQLite schema and migrations, writes, filters, dashboard queries, channels
 internal/collect           /api/event: validation, hashing, UA parsing, GeoIP
-internal/web               dashboard, goals pages, login, templates, static files (bs.js + add-ons, uPlot, jsvectormap)
+internal/web               dashboard, goals pages, login, templates, static files (bs.js + add-ons, jsvectormap, fonts)
 internal/demo              demo data generator
+docs                       README images
 ```
 
 ## License
 
-bonestats is released under the [MIT License](LICENSE). The bundled [uPlot](https://github.com/leeoniya/uPlot) and [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) are MIT-licensed too; their licenses are in `internal/web/static/LICENSE.*.txt`. The DB-IP Lite data you download is CC BY 4.0.
+bonestats is released under the [MIT License](LICENSE). The bundled [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) is MIT-licensed too; its license is in `internal/web/static/LICENSE.jsvectormap.txt`. The bundled [Geist](https://github.com/vercel/geist-font) and [Doto](https://github.com/oliverlalan/Doto) fonts are under the SIL Open Font License 1.1 (`internal/web/static/fonts/OFL-*.txt`). The DB-IP Lite data you download is CC BY 4.0.

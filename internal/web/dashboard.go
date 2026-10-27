@@ -195,7 +195,7 @@ var metricInfo = []metricMeta{
 }
 
 type chip struct {
-	Label, Remove string
+	Key, Dim, Op, Value, Remove string
 }
 
 var opLabels = map[string]string{store.OpIs: "is", store.OpIsNot: "is not", store.OpContains: "contains"}
@@ -265,7 +265,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		filters = append(filters, f)
 		d, _ := store.DimensionByKey(f.Dim)
-		chips = append(chips, chip{d.Label + " " + opLabels[f.Op] + " " + f.Value, n.RemoveFilter(i)})
+		chips = append(chips, chip{f.Dim, d.Label, opLabels[f.Op], f.Value, n.RemoveFilter(i)})
 	}
 	q := store.Query{SiteID: site.ID, From: from, To: to, Location: s.Location, Filters: filters, Goals: goals}
 
@@ -317,6 +317,11 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		chart["prev"], chart["prevLabel"] = prev, prevLabel
 	}
 	chartJSON, _ := json.Marshal(chart)
+	spark := map[string][]float64{}
+	for _, m := range metricInfo {
+		spark[m.Key] = series.Values[m.Key]
+	}
+	sparkJSON, _ := json.Marshal(spark)
 
 	// Breakdowns.
 	pages := tabs{"pages", "Pages", []card{
@@ -440,6 +445,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		"KPIs":        kpis,
 		"Current":     current,
 		"Chart":       template.JS(chartJSON), // json.Marshal escapes <, > and &
+		"Spark":       template.JS(sparkJSON),
 		"Map":         template.JS(mapJSON),
 		"Pages":       pages,
 		"Sources":     sources,
@@ -614,6 +620,20 @@ var vitalInfo = []vitalMeta{
 	{"cls", "CLS", "Cumulative Layout Shift: visual stability", 0.1, 0.25, true},
 	{"fcp", "FCP", "First Contentful Paint", 1800, 3000, false},
 	{"ttfb", "TTFB", "Time to First Byte: server response", 800, 1800, false},
+}
+
+// vitalPos places a value on a gauge whose thirds are good, needs
+// improvement and poor, for the marker on each web vitals tile.
+func vitalPos(key string, v float64) float64 {
+	m := metaFor(key)
+	switch {
+	case v <= m.Good:
+		return v / m.Good * 100 / 3
+	case v <= m.Poor:
+		return 100/3 + (v-m.Good)/(m.Poor-m.Good)*100/3
+	default:
+		return 200/3 + math.Min(1, (v-m.Poor)/m.Poor)*100/3
+	}
 }
 
 func metaFor(key string) vitalMeta {

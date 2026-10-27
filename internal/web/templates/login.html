@@ -1,7 +1,8 @@
 {{define "content"}}
 <main class="login">
   <form method="post" action="/login" class="card">
-    <h1 class="logo">bone<span>stats</span></h1>
+    <h1 class="logo">{{template "mark"}}<span class="wordmark">bonestats</span></h1>
+    <p class="tagline">Analytics, down to the bone</p>
     {{with .Error}}<p class="error">{{.}}</p>{{end}}
     <label for="password">Admin password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
