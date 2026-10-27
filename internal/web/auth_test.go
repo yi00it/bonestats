@@ -219,3 +219,21 @@ func TestLoginBodyLimit(t *testing.T) {
 		t.Errorf("oversized login body: status %d", w.Code)
 	}
 }
+
+// Asset URLs carry a content hash, so browsers fetch new versions at once.
+func TestStaticVersions(t *testing.T) {
+	_, h := testServer(t)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/login", nil))
+	body := w.Body.String()
+	i := strings.Index(body, `/static/app.css?v=`)
+	if i < 0 {
+		t.Fatalf("login page has no versioned app.css link:\n%s", body)
+	}
+	link := body[i : i+strings.IndexByte(body[i:], '"')]
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", link, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s: status %d", link, w.Code)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
@@ -60,13 +61,21 @@ type Server struct {
 }
 
 func (s *Server) Handler() http.Handler {
+	static, _ := fs.Sub(staticFS, "static")
+	versions := staticVersions(static)
+	staticURL := func(name string) string {
+		if v, ok := versions[name]; ok {
+			return "/static/" + name + "?v=" + v
+		}
+		return "/static/" + name
+	}
+
 	s.tmpl = map[string]*template.Template{}
 	for _, page := range []string{"dashboard", "sites", "goals", "login"} {
-		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).
+		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
 
-	static, _ := fs.Sub(staticFS, "static")
 	files := http.FileServerFS(static)
 
 	mux := http.NewServeMux()
@@ -378,6 +387,25 @@ func (s *Server) render(w http.ResponseWriter, page string, data map[string]any)
 func serverError(w http.ResponseWriter, err error) {
 	log.Printf("error: %v", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+// staticVersions hashes each static file, so asset URLs change with their
+// content and browsers never keep an outdated copy from their cache.
+func staticVersions(fsys fs.FS) map[string]string {
+	versions := map[string]string{}
+	fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(fsys, path)
+		if err != nil {
+			return err
+		}
+		h := sha256.Sum256(b)
+		versions[path] = hex.EncodeToString(h[:4])
+		return nil
+	})
+	return versions
 }
 
 func cacheFor(d time.Duration, h http.Handler) http.Handler {
