@@ -1,0 +1,92 @@
+{{define "head"}}<script defer src="/static/app.js"></script>{{end}}
+
+{{define "content"}}
+{{template "nav" .}}
+<main class="narrow">
+  <p class="crumbs"><a href="/sites">Sites</a> / <a href="/?site={{.Site.Domain}}">{{.Site.Domain}}</a></p>
+  <h1>Goals &amp; funnels</h1>
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+
+  <section class="card">
+    <h2>Goals</h2>
+    {{if .Goals}}
+    <table class="list">
+      <thead><tr><th>Goal</th><th>Type</th><th></th></tr></thead>
+      <tbody>
+      {{range .Goals}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{if .PagePath}}Pageview{{else if .Currency}}Event · revenue in {{.Currency}}{{else}}Event{{end}}</td>
+        <td class="n">
+          <form method="post" action="/sites/{{$.Site.ID}}/goals/{{.ID}}/delete" data-confirm="Delete goal “{{.Name}}”? Funnels using it are deleted too. Your data is kept.">
+            <button class="danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No goals yet. A goal counts visitors who did something you care about.</p>{{end}}
+  </section>
+
+  <div class="two">
+    <form method="post" action="/sites/{{.Site.ID}}/goals" class="card form">
+      <h2>Custom event goal</h2>
+      <input type="hidden" name="kind" value="event">
+      <label for="event">Event name</label>
+      <input id="event" name="event" placeholder="signup" required maxlength="64">
+      <label for="currency">Revenue currency <small>(optional)</small></label>
+      <input id="currency" name="currency" placeholder="EUR" maxlength="3" pattern="[A-Za-z]{3}">
+      <small>Set a currency to track revenue: <code>bonestats("purchase", {plan: "pro"}, 29.90)</code></small>
+      <button type="submit">Add goal</button>
+    </form>
+
+    <form method="post" action="/sites/{{.Site.ID}}/goals" class="card form">
+      <h2>Pageview goal</h2>
+      <input type="hidden" name="kind" value="page">
+      <label for="path">Page path</label>
+      <input id="path" name="path" placeholder="/thank-you" required>
+      <small>Use <code>*</code> as a wildcard, e.g. <code>/blog/*</code>.</small>
+      <button type="submit">Add goal</button>
+    </form>
+  </div>
+
+  {{if .Suggestions}}
+  <div class="suggest">Quick add:
+    {{range .Suggestions}}
+    <form method="post" action="/sites/{{$.Site.ID}}/goals"><input type="hidden" name="kind" value="event"><button name="event" value="{{.}}" class="link">{{.}}</button></form>
+    {{end}}
+  </div>
+  {{end}}
+
+  <section class="card">
+    <h2>Funnels</h2>
+    {{range .Funnels}}
+    <div class="funnel-def">
+      <div><b>{{.Name}}</b><br><small>{{range $i, $n := .StepNames}}{{if $i}} → {{end}}{{$n}}{{end}}</small></div>
+      <form method="post" action="/sites/{{$.Site.ID}}/funnels/{{.ID}}/delete" data-confirm="Delete funnel “{{.Name}}”?">
+        <button class="danger">Delete</button>
+      </form>
+    </div>
+    {{else}}<p class="empty">A funnel shows how many visitors complete a sequence of goals within one visit.</p>{{end}}
+
+    {{if ge (len .Goals) 2}}
+    <form method="post" action="/sites/{{.Site.ID}}/funnels" class="form funnel-form">
+      <h3>New funnel</h3>
+      <label for="fname">Name</label>
+      <input id="fname" name="name" placeholder="Signup flow" required maxlength="100">
+      <label>Steps <small>(2 to 8, in order; leave the rest empty)</small></label>
+      <ol>
+      {{range $i := .StepSlots}}
+        <li><select name="step" aria-label="Step {{$i}}" {{if le $i 2}}required{{end}}>
+          <option value="">–</option>
+          {{range $.Goals}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        </select></li>
+      {{end}}
+      </ol>
+      <button type="submit">Create funnel</button>
+    </form>
+    {{else}}<p class="empty">Add at least two goals to create a funnel.</p>{{end}}
+  </section>
+</main>
+{{end}}

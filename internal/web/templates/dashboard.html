@@ -1,0 +1,187 @@
+{{define "head"}}
+<link rel="stylesheet" href="/static/uPlot.min.css">
+<link rel="stylesheet" href="/static/jsvectormap.min.css">
+<script defer src="/static/uPlot.iife.min.js"></script>
+<script defer src="/static/jsvectormap.min.js"></script>
+<script defer src="/static/world.js"></script>
+<script defer src="/static/app.js"></script>
+{{end}}
+
+{{define "content"}}
+{{template "nav" .}}
+<main>
+  <form class="toolbar" method="get" action="/">
+    {{range .Nav.Hidden "site" "range" "from" "to" "compare"}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+    <select name="site" aria-label="Site" data-autosubmit>
+      {{range .Sites}}<option value="{{.Domain}}" {{if eq .ID $.Site.ID}}selected{{end}}>{{.Domain}}</option>{{end}}
+    </select>
+    <select name="range" aria-label="Date range" data-autosubmit>
+      {{range .Ranges}}<option value="{{.Key}}" {{if eq .Key $.Range}}selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <span class="custom" {{if ne .Range "custom"}}data-custom-hidden{{end}}>
+      <input type="date" name="from" value="{{.From}}" aria-label="From">
+      <span>–</span>
+      <input type="date" name="to" value="{{.To}}" aria-label="To">
+      <button type="submit">Apply</button>
+    </span>
+    <select name="compare" aria-label="Compare" data-autosubmit>
+      <option value="" {{if eq .Compare ""}}selected{{end}}>vs previous period</option>
+      <option value="year" {{if eq .Compare "year"}}selected{{end}}>vs previous year</option>
+      <option value="off" {{if eq .Compare "off"}}selected{{end}}>No comparison</option>
+    </select>
+    <span class="live"><i></i>{{.Current}} online now</span>
+  </form>
+
+  <div class="filters">
+    {{range .Chips}}<a class="chip" href="{{.Remove}}" title="Remove filter">{{.Label}} <b aria-hidden="true">×</b></a>{{end}}
+    <details class="add-filter">
+      <summary>+ Filter</summary>
+      <form method="get" action="/">
+        {{range .Nav.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+        <select name="fdim" aria-label="Dimension">
+          {{range .Dimensions}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
+          {{range .PropTabs}}<option value="prop:{{.Key}}">Property: {{.Key}}</option>{{end}}
+        </select>
+        <select name="fop" aria-label="Operator">
+          <option value="is">is</option><option value="is_not">is not</option><option value="contains">contains</option>
+        </select>
+        <input name="fval" placeholder="Value" aria-label="Value" required>
+        <button type="submit">Apply</button>
+      </form>
+    </details>
+  </div>
+
+  <section class="kpis">
+    {{range .KPIs}}
+    <a class="kpi{{if .Active}} active{{end}}" href="{{.Link}}" title="Chart {{.Label}}">
+      <span>{{.Label}}</span><b>{{.Value}}</b>
+      {{if .Change}}<small class="trend {{.Trend}}">{{.Change}}</small>{{end}}
+    </a>
+    {{end}}
+  </section>
+
+  <section class="card chart-card">
+    <h2>{{.RangeLabel}}</h2>
+    <div id="chart" aria-label="Chart over time"></div>
+    <script type="application/json" id="chart-data">{{.Chart}}</script>
+  </section>
+
+  <div class="grid">
+    <section class="card">{{template "tabs" .Pages}}</section>
+    <section class="card">{{template "tabs" .Sources}}</section>
+    <section class="card">{{template "tabs" .Campaigns}}</section>
+    <section class="card">{{template "tabs" .Tech}}</section>
+    <section class="card wide">
+      <div class="geo">
+        <div id="map" aria-label="Visitors by country"></div>
+        <script type="application/json" id="map-data">{{.Map}}</script>
+        <div>{{template "tabs" .Locations}}
+          {{if not .GeoEnabled}}<p class="empty">Location detection is off for new visits. Set <code>BONESTATS_GEOIP</code> to a DB-IP Lite .mmdb file.</p>{{end}}
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Goal conversions</h2>
+      <div class="tabs">
+        <input type="radio" name="goals" id="goals-0" checked><label for="goals-0">Goals</label>
+        <input type="radio" name="goals" id="goals-1"><label for="goals-1">All events</label>
+        <div class="panel">
+          {{if .Goals}}
+          <table class="bars">
+            <thead><tr><th>Goal</th><th class="n" title="Unique conversions">Uniques</th><th class="n opt">Total</th><th class="n" title="Conversion rate">CR</th>
+              {{if .HasRevenue}}<th class="n">Revenue</th>{{end}}</tr></thead>
+            <tbody>
+            {{range .Goals}}
+            <tr style="--w: {{printf "%.1f" .Percent}}%">
+              <td class="label"><a href="{{.Link}}">{{.Goal.Name}}</a></td>
+              <td class="n">{{num .Visitors}}</td><td class="n opt">{{num .Count}}</td><td class="n">{{pct1 .CR}}</td>
+              {{if $.HasRevenue}}<td class="n">{{if .Goal.Currency}}<span title="Average {{money .AvgRevenue .Goal.Currency}}">{{money .Revenue .Goal.Currency}}</span>{{else}}–{{end}}</td>{{end}}
+            </tr>
+            {{end}}
+            </tbody>
+          </table>
+          {{else}}<p class="empty">No goals yet. <a href="/sites/{{.Site.ID}}/goals">Set up goals</a> to see conversion rates.</p>{{end}}
+        </div>
+        <div class="panel">
+          {{if .Events}}
+          <table class="bars">
+            <thead><tr><th>Event</th><th class="n">Visitors</th><th class="n">Count</th></tr></thead>
+            <tbody>{{range .Events}}<tr style="--w: {{printf "%.1f" .Percent}}%"><td class="label"><a href="{{.Link}}">{{.Label}}</a></td><td class="n">{{num .Visitors}}</td><td class="n">{{num .Count}}</td></tr>{{end}}</tbody>
+          </table>
+          {{else}}<p class="empty">No custom events. Call <code>bonestats("signup")</code> on your site to record one.</p>{{end}}
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Properties</h2>
+      {{if .PropTabs}}
+      <div class="pills">{{range .PropTabs}}<a href="{{.Link}}" {{if .Active}}class="active"{{end}}>{{.Key}}</a>{{end}}</div>
+      <table class="bars">
+        <thead><tr><th>{{.PropKey}}</th><th class="n">Visitors</th><th class="n">Events</th>{{if .Currency}}<th class="n">Revenue</th>{{end}}</tr></thead>
+        <tbody>
+        {{range .PropRows}}
+        <tr style="--w: {{printf "%.1f" .Percent}}%">
+          <td class="label"><a href="{{.Link}}">{{.Label}}</a></td><td class="n">{{num .Visitors}}</td><td class="n">{{num .Count}}</td>
+          {{if $.Currency}}<td class="n">{{with .Revenue}}{{money (deref .) $.Currency}}{{end}}</td>{{end}}
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}<p class="empty">No custom properties. Send them with <code>bonestats("signup", {plan: "pro"})</code>.</p>{{end}}
+    </section>
+
+    <section class="card wide">
+      <h2>Funnel</h2>
+      {{if .Funnel}}
+      {{if gt (len .FunnelTabs) 1}}<div class="pills">{{range .FunnelTabs}}<a href="{{.Link}}" {{if .Active}}class="active"{{end}}>{{.Name}}</a>{{end}}</div>{{end}}
+      <ol class="funnel">
+        {{range $i, $st := .FunnelSteps}}
+        <li style="--w: {{printf "%.1f" $st.Percent}}%">
+          <div class="step"><span>{{$st.Name}}</span><b>{{num $st.Visitors}}</b></div>
+          <div class="bar"></div>
+          <small>{{pct1 $st.Percent}} of first step{{if $i}} · <span class="drop">−{{pct1 $st.DropOff}} dropped off</span>{{end}}</small>
+        </li>
+        {{end}}
+      </ol>
+      {{else}}<p class="empty">No funnels yet. <a href="/sites/{{.Site.ID}}/goals">Create one</a> from your goals to see where visitors drop off.</p>{{end}}
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Web performance <small>75th percentile, real visitors</small></h2>
+    <div class="vitals">
+      {{range .VitalInfo}}
+      {{$st := index $.Vitals .Key}}
+      <div class="vital {{if $st.Samples}}{{rating .Key $st.P75}}{{end}}" title="{{.Desc}}">
+        <span>{{.Name}}</span>
+        <b>{{if $st.Samples}}{{vital .Key $st.P75}}{{else}}–{{end}}</b>
+        <small>{{num $st.Samples}} samples</small>
+      </div>
+      {{end}}
+    </div>
+    {{if .VitalPages}}
+    <div class="scroll">
+    <table class="vitals-table">
+      <thead><tr><th>Page</th>{{range .VitalInfo}}<th class="n" title="{{.Desc}}">{{.Name}}</th>{{end}}<th class="n">Samples</th></tr></thead>
+      <tbody>
+      {{range $p := .VitalPages}}
+      <tr><td class="label">{{$p.Path}}</td>
+        {{range $.VitalInfo}}{{$v := index $p.P75 .Key}}<td class="n">{{if $v}}<span class="dot {{rating .Key (deref $v)}}"></span>{{vital .Key (deref $v)}}{{else}}–{{end}}</td>{{end}}
+        <td class="n">{{num $p.Samples}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{end}}
+    <p class="legend"><span class="dot good"></span>Good <span class="dot ni"></span>Needs improvement <span class="dot poor"></span>Poor
+      {{if .Chips}} · Only page and device filters apply to performance data.{{end}}</p>
+  </section>
+
+  <footer>
+    {{if .MultiDay}}<p>Visitors are counted per day without cookies, so someone who returns on a different day is counted again.</p>{{end}}
+    {{if .GeoEnabled}}<p><a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></p>{{end}}
+  </footer>
+</main>
+{{end}}

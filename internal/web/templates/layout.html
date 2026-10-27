@@ -1,0 +1,63 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{.Title}} · bonestats</title>
+<link rel="stylesheet" href="/static/app.css">
+{{block "head" .}}{{end}}
+</head>
+<body>
+{{template "content" .}}
+</body>
+</html>{{end}}
+
+{{define "nav"}}
+<header class="top">
+  <a href="/" class="logo">bone<span>stats</span></a>
+  <nav>
+    <a href="/sites">Sites</a>
+    <form method="post" action="/logout"><button class="link">Log out</button></form>
+  </nav>
+</header>
+{{end}}
+
+{{/* A breakdown table. Clicking a row filters the dashboard by it. */}}
+{{define "table"}}
+{{if .Rows}}
+<table class="bars">
+  <thead><tr>
+    <th>{{.Title}}</th><th class="n">Visitors</th><th class="n">{{.Head}}</th>
+    {{if .HasCR}}<th class="n" title="Conversion rate">CR</th>{{end}}
+    {{if .Pages}}<th class="n opt" title="Average time visible per pageview">Time</th><th class="n opt" title="Average scroll depth">Scroll</th>{{end}}
+  </tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr style="--w: {{printf "%.1f" .Percent}}%">
+    <td class="label"><a href="{{.Link}}" title="Filter by {{.Label}}"{{if eq $.Dim "country"}} data-country="{{.Label}}"{{end}}>{{.Label}}</a>{{with .Hint}} <small>{{.}}</small>{{end}}</td>
+    <td class="n">{{num .Visitors}}</td><td class="n">{{num .Count}}</td>
+    {{if $.HasCR}}<td class="n">{{with .CR}}{{pct1 (deref .)}}{{else}}–{{end}}</td>{{end}}
+    {{if $.Pages}}
+    <td class="n opt">{{with .TimeOnPage}}{{dur .}}{{else}}–{{end}}</td>
+    <td class="n opt">{{with .Scroll}}{{pct (deref .)}}{{else}}–{{end}}</td>
+    {{end}}
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="empty">No data for this period</p>{{end}}
+{{end}}
+
+{{/* A card with CSS-only tabs (radio buttons), one breakdown per tab. */}}
+{{define "tabs"}}
+<h2>{{.Title}}</h2>
+<div class="tabs">
+  {{$name := .Name}}
+  {{range $i, $c := .Cards}}
+  <input type="radio" name="{{$name}}" id="{{$name}}-{{$i}}" {{if eq $i 0}}checked{{end}}>
+  <label for="{{$name}}-{{$i}}">{{$c.Title}}</label>
+  {{end}}
+  {{range .Cards}}<div class="panel">{{template "table" .}}</div>{{end}}
+</div>
+{{end}}

@@ -1,0 +1,1 @@
+!function(d){function h(e){var a=e.target.closest?.("a[href]");a&&e.button<2&&/\.(pdf|xlsx?|docx?|txt|rtf|csv|exe|key|pp[st]x?|7z|pkg|rar|gz|zip|avi|mov|mp4|mpe?g|wmv|midi?|mp3|wav|wma|dmg|iso|msi)$/i.test(a.pathname)&&bonestats("File Download",{url:a.origin+a.pathname})}d.addEventListener("click",h);d.addEventListener("auxclick",h)}(document)

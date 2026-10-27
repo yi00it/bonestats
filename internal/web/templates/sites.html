@@ -1,0 +1,67 @@
+{{define "head"}}<script defer src="/static/app.js"></script>{{end}}
+
+{{define "content"}}
+{{template "nav" .}}
+<main class="narrow">
+  <h1>Sites</h1>
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+
+  <form method="post" action="/sites" class="card add-site">
+    <label for="domain">Add a website</label>
+    <div class="row">
+      <input id="domain" name="domain" placeholder="example.com" required>
+      <button type="submit">Add site</button>
+    </div>
+    <small>Use the bare domain. Subdomains are tracked under it automatically. For local testing, add <code>localhost</code>.</small>
+  </form>
+
+  {{range .Sites}}
+  <section class="card site">
+    <div class="site-head">
+      <h2><a href="/?site={{.Domain}}">{{.Domain}}</a></h2>
+      <div class="actions">
+        <a href="/sites/{{.ID}}/goals">Goals &amp; funnels</a>
+        <form method="post" action="/sites/{{.ID}}/delete" data-confirm="Delete {{.Domain}} and ALL of its statistics? This cannot be undone.">
+          <button class="danger">Delete</button>
+        </form>
+      </div>
+    </div>
+    <p>Paste this into the <code>&lt;head&gt;</code> of every page:</p>
+    <pre><code>&lt;script defer data-domain="{{.Domain}}" src="{{$.BaseURL}}/bs.js"&gt;&lt;/script&gt;</code></pre>
+  </section>
+  {{end}}
+
+  <section class="card">
+    <h2>Optional add-ons</h2>
+    <p>Add names to the script file to switch on automatic tracking. Each add-on is about 0.25 KB.</p>
+    <table class="list">
+      <tbody>
+        <tr><td><code>bs.outbound.js</code></td><td>Clicks on links to other websites, as the <code>Outbound Link: Click</code> event (with a <code>url</code> property)</td></tr>
+        <tr><td><code>bs.downloads.js</code></td><td>Clicks on file links (pdf, zip, docx, …), as the <code>File Download</code> event</td></tr>
+        <tr><td><code>bs.downloads.outbound.js</code></td><td>Both</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Custom events, properties &amp; revenue</h2>
+    <p>Call <code>bonestats(name, properties, revenue)</code> anywhere after the script. Properties and revenue are optional:</p>
+    <pre><code>&lt;button onclick="bonestats('signup', {plan: 'pro'})"&gt;Sign up&lt;/button&gt;
+bonestats("purchase", {plan: "pro"}, 29.90)  // revenue in the goal's currency</code></pre>
+    <p>Up to 10 properties per event with short text, number or true/false values. Don't put personal data (names, emails) in properties.</p>
+    <p>To record events before the script has loaded, add this one-liner above it:</p>
+    <pre><code>&lt;script&gt;window.bonestats=window.bonestats||function(){(bonestats.q=bonestats.q||[]).push(arguments)}&lt;/script&gt;</code></pre>
+    <p>404 pages: add <code>&lt;script&gt;bonestats("404", {path: location.pathname})&lt;/script&gt;</code> to your "not found" page and a <code>404</code> goal. Filter by that goal and the Properties card lists the broken URLs.</p>
+  </section>
+
+  <section class="card">
+    <h2>Privacy</h2>
+    <ul>
+      <li>No cookies, localStorage or fingerprinting on visitors' devices.</li>
+      <li>IP addresses are never stored. Visitors are counted with a hash whose salt is deleted every day.</li>
+      <li>Visitors who send Global Privacy Control or Do Not Track are not counted.</li>
+      <li>Data older than {{.Retention}} days is deleted automatically.</li>
+    </ul>
+  </section>
+</main>
+{{end}}

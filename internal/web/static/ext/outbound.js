@@ -1,0 +1,1 @@
+!function(d,l){function h(e){var a=e.target.closest?.("a[href]");a&&e.button<2&&a.host!=l.host&&/^https?:$/.test(a.protocol)&&bonestats("Outbound Link: Click",{url:a.origin+a.pathname})}d.addEventListener("click",h);d.addEventListener("auxclick",h)}(document,location)
