@@ -9,7 +9,7 @@
 
 {{define "content"}}
 {{template "nav" .}}
-<main>
+<main data-live>
   <form class="toolbar" method="get" action="/">
     {{range .Nav.Hidden "site" "range" "from" "to" "compare"}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
     <select name="site" aria-label="Site" data-autosubmit>
