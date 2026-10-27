@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,10 +28,14 @@ import (
 const maxBody = 4 << 10
 
 type Collector struct {
-	Store      *store.Store
-	Geo        *Geo
-	Location   *time.Location
-	TrustProxy bool // read client IP from X-Forwarded-For (behind a reverse proxy)
+	Store       *store.Store
+	Geo         *Geo
+	Location    *time.Location
+	ProxyHeader string // header the reverse proxy puts the client IP in; "" = none
+	RateLimit   int    // beacons per minute per client; 0 = unlimited
+
+	limitOnce sync.Once
+	limiter   *rateLimiter
 
 	mu      sync.Mutex
 	saltDay string
@@ -86,6 +91,11 @@ func (c *Collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isBot(ua) {
 		return
 	}
+	ip := ClientIP(r, c.ProxyHeader)
+	c.limitOnce.Do(func() { c.limiter = newRateLimiter(c.RateLimit) })
+	if !c.limiter.allow(ip, time.Now()) {
+		return
+	}
 
 	var p payload
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxBody)).Decode(&p); err != nil {
@@ -95,14 +105,14 @@ func (c *Collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// that must not cancel the write.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
 	defer cancel()
-	if err := c.handle(ctx, r, ua, p); err != nil && !errors.Is(err, errDropped) {
+	if err := c.handle(ctx, r, ip, ua, p); err != nil && !errors.Is(err, errDropped) {
 		log.Printf("collect: %v", err)
 	}
 }
 
 var errDropped = errors.New("dropped")
 
-func (c *Collector) handle(ctx context.Context, r *http.Request, ua string, p payload) error {
+func (c *Collector) handle(ctx context.Context, r *http.Request, ip netip.Addr, ua string, p payload) error {
 	domain := store.NormalizeDomain(p.Domain)
 	site, err := c.Store.SiteByDomain(ctx, domain)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -115,7 +125,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ua string, p pa
 	}
 
 	now := time.Now()
-	visitor, err := c.visitorHash(ctx, now, domain, ClientIP(r, c.TrustProxy), ua)
+	visitor, err := c.visitorHash(ctx, now, domain, ip, ua)
 	if err != nil {
 		return err
 	}
@@ -130,12 +140,14 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ua string, p pa
 		if p.Engaged != nil && *p.Engaged >= 0 && *p.Engaged <= int64(store.SessionTimeout/time.Millisecond) {
 			engaged = p.Engaged
 		}
-		if err := c.Store.RecordLeave(ctx, store.Leave{
+		found, err := c.Store.RecordLeave(ctx, store.Leave{
 			SiteID: site.ID, Visitor: visitor, Time: now, Path: path, Scroll: scroll, Engaged: engaged,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		if v := p.Vitals; v != nil {
+		// Vitals only count for a page load that was recorded as a visit.
+		if v := p.Vitals; v != nil && found {
 			return c.Store.RecordVitals(ctx, store.Vitals{
 				SiteID: site.ID, Time: now, Path: path, Device: device,
 				LCP: clamp(v.LCP, 0, 120000), CLS: clamp(v.CLS, 0, 100), INP: clamp(v.INP, 0, 120000),
@@ -160,7 +172,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ua string, p pa
 	// Visit attributes are only stored when this event starts a new visit.
 	refHost, refURL := referrer(p.Referrer, domain)
 	browser, os := parseBrowser(ua), parseOS(ua)
-	loc := c.Geo.Lookup(ClientIP(r, c.TrustProxy))
+	loc := c.Geo.Lookup(ip)
 	e.Visit = store.Visit{
 		Referrer:       refHost,
 		ReferrerURL:    refURL,
@@ -242,22 +254,34 @@ func (c *Collector) dailySalt(ctx context.Context, now time.Time) ([]byte, error
 	return salt, nil
 }
 
-// ClientIP returns the visitor's IP. Behind a trusted reverse proxy it is
-// the last X-Forwarded-For entry, the one the proxy itself appended: earlier
-// entries come from the client and can be forged.
-func ClientIP(r *http.Request, trustProxy bool) netip.Addr {
-	if trustProxy {
-		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-			last := xff[len(xff)-1]
+// RotateSalt forgets yesterday's salt, in memory and in the database, once
+// the day has changed. Run it periodically: otherwise the old salt would
+// survive until the first beacon of the new day.
+func (c *Collector) RotateSalt(ctx context.Context, now time.Time) error {
+	day := now.In(c.Location).Format("2006-01-02")
+	c.mu.Lock()
+	if c.saltDay != day {
+		c.saltDay, c.salt = "", nil
+	}
+	c.mu.Unlock()
+	return c.Store.PurgeSalts(ctx, day)
+}
+
+// ClientIP returns the visitor's IP. Behind a reverse proxy, proxyHeader
+// names the one header the proxy sets to the client's IP; only that header
+// is read, because any other one may come straight from the client. For
+// X-Forwarded-For it is the last entry, the one the proxy itself appended:
+// earlier entries come from the client and can be forged.
+func ClientIP(r *http.Request, proxyHeader string) netip.Addr {
+	if proxyHeader != "" {
+		if vs := r.Header.Values(proxyHeader); len(vs) > 0 {
+			last := vs[len(vs)-1]
 			if i := strings.LastIndexByte(last, ','); i >= 0 {
 				last = last[i+1:]
 			}
 			if ip, err := netip.ParseAddr(strings.TrimSpace(last)); err == nil {
 				return ip.Unmap()
 			}
-		}
-		if ip, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); err == nil {
-			return ip.Unmap()
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -294,7 +318,7 @@ func referrer(ref, domain string) (host, hostPath string) {
 		return "", ""
 	}
 	hostPath = host
-	if p := strings.TrimSuffix(u.EscapedPath(), "/"); p != "" {
+	if p := strings.TrimSuffix(scrubPath(u.EscapedPath()), "/"); p != "" {
 		hostPath += p
 	}
 	return limit(host, 253), limit(hostPath, 512)
@@ -310,7 +334,36 @@ func cleanPath(p string) string {
 	if len(p) > 1 {
 		p = strings.TrimSuffix(p, "/")
 	}
-	return limit(p, 512)
+	return limit(scrubPath(p), 512)
+}
+
+var (
+	hexIDRe    = regexp.MustCompile(`^[0-9a-fA-F-]+$`)
+	tokenRe    = regexp.MustCompile(`^[A-Za-z0-9_.=~-]{20,}$`)
+	upperRe    = regexp.MustCompile(`[A-Z]`)
+	lowerRe    = regexp.MustCompile(`[a-z]`)
+	hasDigitRe = regexp.MustCompile(`[0-9]`)
+)
+
+// scrubPath replaces path segments that look like personal data or secrets,
+// such as /reset/<token> or /users/jane@example.com, so they are never
+// stored. It is a best-effort guard: email addresses become [email], and
+// UUIDs, long hex IDs and mixed-case tokens become [id].
+func scrubPath(p string) string {
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		lower := strings.ToLower(s)
+		switch {
+		case s == "":
+		case strings.Contains(s, "@") || strings.Contains(lower, "%40"):
+			segs[i] = "[email]"
+		case hexIDRe.MatchString(s) && strings.Count(s, "-") < len(s)-15:
+			segs[i] = "[id]" // 16+ hex digits, e.g. a UUID
+		case tokenRe.MatchString(s) && upperRe.MatchString(s) && lowerRe.MatchString(s) && hasDigitRe.MatchString(s):
+			segs[i] = "[id]" // base64-like token
+		}
+	}
+	return strings.Join(segs, "/")
 }
 
 func limit(s string, n int) string {

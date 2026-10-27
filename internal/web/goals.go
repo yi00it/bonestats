@@ -3,9 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
 
 	"bonestats/internal/store"
 )
@@ -29,10 +27,10 @@ func (s *Server) siteFromPath(w http.ResponseWriter, r *http.Request) (store.Sit
 	return store.Site{}, false
 }
 
-func goalsURL(site store.Site, errMsg string) string {
+func goalsURL(site store.Site, err error) string {
 	u := fmt.Sprintf("/sites/%d/goals", site.ID)
-	if errMsg != "" {
-		u += "?error=" + url.QueryEscape(errMsg)
+	if err != nil {
+		u += "?error=" + errorCode(err)
 	}
 	return u
 }
@@ -86,7 +84,7 @@ func (s *Server) goalsPage(w http.ResponseWriter, r *http.Request) {
 		"Funnels":     fv,
 		"Suggestions": suggestions,
 		"StepSlots":   []int{1, 2, 3, 4, 5, 6, 7, 8},
-		"Error":       r.URL.Query().Get("error"),
+		"Error":       errorMessages[r.URL.Query().Get("error")],
 	})
 }
 
@@ -102,14 +100,7 @@ func (s *Server) addGoal(w http.ResponseWriter, r *http.Request) {
 		g.EventName = r.PostFormValue("event")
 		g.Currency = r.PostFormValue("currency")
 	}
-	msg := ""
-	if err := s.Store.AddGoal(r.Context(), g); err != nil {
-		msg = err.Error()
-		if strings.Contains(msg, "UNIQUE") {
-			msg = "That goal already exists."
-		}
-	}
-	http.Redirect(w, r, goalsURL(site, msg), http.StatusSeeOther)
+	http.Redirect(w, r, goalsURL(site, s.Store.AddGoal(r.Context(), g)), http.StatusSeeOther)
 }
 
 func (s *Server) deleteGoal(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +113,7 @@ func (s *Server) deleteGoal(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	http.Redirect(w, r, goalsURL(site, ""), http.StatusSeeOther)
+	http.Redirect(w, r, goalsURL(site, nil), http.StatusSeeOther)
 }
 
 func (s *Server) addFunnel(w http.ResponseWriter, r *http.Request) {
@@ -137,11 +128,7 @@ func (s *Server) addFunnel(w http.ResponseWriter, r *http.Request) {
 			f.Steps = append(f.Steps, id)
 		}
 	}
-	msg := ""
-	if err := s.Store.AddFunnel(r.Context(), f); err != nil {
-		msg = err.Error()
-	}
-	http.Redirect(w, r, goalsURL(site, msg), http.StatusSeeOther)
+	http.Redirect(w, r, goalsURL(site, s.Store.AddFunnel(r.Context(), f)), http.StatusSeeOther)
 }
 
 func (s *Server) deleteFunnel(w http.ResponseWriter, r *http.Request) {
@@ -154,5 +141,5 @@ func (s *Server) deleteFunnel(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	http.Redirect(w, r, goalsURL(site, ""), http.StatusSeeOther)
+	http.Redirect(w, r, goalsURL(site, nil), http.StatusSeeOther)
 }

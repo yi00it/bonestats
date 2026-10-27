@@ -371,7 +371,7 @@ func visit(ctx context.Context, st *store.Store, r *rand.Rand, siteID int64, t, 
 		}
 		scroll := int64(math.Min(100, math.Max(10, lognormal(r, scrollMedian(path), 0.35))))
 		engaged := int64(float64(stay.Milliseconds()) * (0.6 + 0.4*r.Float64()))
-		if err := st.RecordLeave(ctx, store.Leave{SiteID: siteID, Visitor: visitor, Time: t, Path: path, Scroll: &scroll, Engaged: &engaged}); err != nil {
+		if _, err := st.RecordLeave(ctx, store.Leave{SiteID: siteID, Visitor: visitor, Time: t, Path: path, Scroll: &scroll, Engaged: &engaged}); err != nil {
 			return err
 		}
 		if r.Float64() < 0.75 { // not every browser reports vitals

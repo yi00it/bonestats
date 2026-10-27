@@ -7,11 +7,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,26 +39,37 @@ func main() {
 	if err != nil {
 		log.Fatalf("BONESTATS_RETENTION_DAYS must be a whole number of days, got %q", os.Getenv("BONESTATS_RETENTION_DAYS"))
 	}
-	trustProxyDefault, err := strconv.ParseBool(env("BONESTATS_TRUST_PROXY", "false"))
+	eventRateDefault, err := strconv.Atoi(env("BONESTATS_EVENT_RATE", "120"))
 	if err != nil {
-		log.Fatalf("BONESTATS_TRUST_PROXY must be true or false, got %q", os.Getenv("BONESTATS_TRUST_PROXY"))
+		log.Fatalf("BONESTATS_EVENT_RATE must be a whole number of beacons per minute, got %q", os.Getenv("BONESTATS_EVENT_RATE"))
 	}
+	trustProxyDefault := boolEnv("BONESTATS_TRUST_PROXY")
 	var (
-		addr       = flag.String("addr", env("BONESTATS_ADDR", ":8080"), "listen address")
-		dbPath     = flag.String("db", env("BONESTATS_DB", "bonestats.db"), "SQLite database file")
-		geoPath    = flag.String("geoip", env("BONESTATS_GEOIP", ""), "optional DB-IP/MaxMind country .mmdb file")
-		retention  = flag.Int("retention", retentionDefault, "delete data older than this many days (0 = keep forever)")
-		tz         = flag.String("tz", env("BONESTATS_TZ", "Local"), "timezone for days in the dashboard, e.g. Europe/Berlin")
-		trustProxy = flag.Bool("trust-proxy", trustProxyDefault, "read client IP from X-Forwarded-For")
+		addr         = flag.String("addr", env("BONESTATS_ADDR", ":8080"), "listen address")
+		dbPath       = flag.String("db", env("BONESTATS_DB", "bonestats.db"), "SQLite database file")
+		geoPath      = flag.String("geoip", env("BONESTATS_GEOIP", ""), "optional DB-IP/MaxMind country .mmdb file")
+		retention    = flag.Int("retention", retentionDefault, "delete data older than this many days (0 = keep forever)")
+		tz           = flag.String("tz", env("BONESTATS_TZ", "Local"), "timezone for days in the dashboard, e.g. Europe/Berlin")
+		proxyHeader  = flag.String("proxy-header", env("BONESTATS_PROXY_HEADER", ""), "header your reverse proxy sets to the client IP, e.g. X-Forwarded-For or X-Real-IP")
+		trustProxy   = flag.Bool("trust-proxy", trustProxyDefault, "deprecated: same as -proxy-header X-Forwarded-For")
+		allowHTTP    = flag.Bool("allow-http", boolEnv("BONESTATS_ALLOW_HTTP"), "allow logging in over plain HTTP from hosts other than localhost")
+		eventRate    = flag.Int("event-rate", eventRateDefault, "beacons per minute accepted from one IP (0 = unlimited)")
+		passwordFile = flag.String("password-file", env("BONESTATS_PASSWORD_FILE", ""), "file holding the admin password, instead of BONESTATS_PASSWORD")
 	)
 	flag.Parse()
 	if *retention < 0 {
 		log.Fatal("retention must be 0 (keep forever) or a positive number of days")
 	}
+	if *eventRate < 0 {
+		log.Fatal("event rate must be 0 (unlimited) or a positive number of beacons per minute")
+	}
+	if *trustProxy && *proxyHeader == "" {
+		*proxyHeader = "X-Forwarded-For"
+	}
 
-	password := os.Getenv("BONESTATS_PASSWORD")
-	if len(password) < 8 {
-		log.Fatal("set BONESTATS_PASSWORD to an admin password of at least 8 characters")
+	password, err := readPassword(*passwordFile)
+	if err != nil {
+		log.Fatal(err)
 	}
 	loc, err := time.LoadLocation(*tz)
 	if err != nil {
@@ -91,14 +104,16 @@ func main() {
 		log.Print("admin password changed: logged out all sessions")
 	}
 
+	collector := &collect.Collector{Store: st, Geo: geo, Location: loc, ProxyHeader: *proxyHeader, RateLimit: *eventRate}
 	srv := &web.Server{
-		Store:      st,
-		Password:   password,
-		TrustProxy: *trustProxy,
-		Location:   loc,
-		Retention:  *retention,
-		GeoEnabled: geo.Enabled(),
-		Collector:  &collect.Collector{Store: st, Geo: geo, Location: loc, TrustProxy: *trustProxy},
+		Store:       st,
+		Password:    password,
+		ProxyHeader: *proxyHeader,
+		AllowHTTP:   *allowHTTP,
+		Location:    loc,
+		Retention:   *retention,
+		GeoEnabled:  geo.Enabled(),
+		Collector:   collector,
 	}
 	httpServer := &http.Server{
 		Addr:              *addr,
@@ -114,6 +129,7 @@ func main() {
 	if *retention > 0 {
 		go pruneLoop(ctx, st, time.Duration(*retention)*24*time.Hour)
 	}
+	go saltLoop(ctx, collector)
 
 	go func() {
 		log.Printf("bonestats listening on %s (geoip: %v, retention: %d days)", *addr, geo.Enabled(), *retention)
@@ -126,6 +142,55 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpServer.Shutdown(shutdownCtx)
+}
+
+func boolEnv(key string) bool {
+	v, err := strconv.ParseBool(env(key, "false"))
+	if err != nil {
+		log.Fatalf("%s must be true or false, got %q", key, os.Getenv(key))
+	}
+	return v
+}
+
+// minPassword is the shortest admin password accepted. The login is public,
+// so it has to withstand guessing.
+const minPassword = 12
+
+// readPassword returns the admin password from the file, if given, or from
+// BONESTATS_PASSWORD.
+func readPassword(file string) (string, error) {
+	password := os.Getenv("BONESTATS_PASSWORD")
+	if file != "" {
+		if password != "" {
+			return "", errors.New("set either BONESTATS_PASSWORD or a password file, not both")
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("password file: %w", err)
+		}
+		password = strings.TrimRight(string(b), "\r\n")
+	}
+	if len(password) < minPassword {
+		return "", fmt.Errorf("set BONESTATS_PASSWORD (or BONESTATS_PASSWORD_FILE) to an admin password of at least %d characters", minPassword)
+	}
+	return password, nil
+}
+
+// saltLoop deletes the previous day's salt soon after midnight, even when no
+// beacon arrives to rotate it.
+func saltLoop(ctx context.Context, c *collect.Collector) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		if err := c.RotateSalt(ctx, time.Now()); err != nil {
+			log.Printf("salt: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // pruneLoop deletes expired data at startup and then every six hours.

@@ -10,6 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -144,8 +147,13 @@ CREATE TABLE IF NOT EXISTS logins (
 `
 
 func Open(path string) (*Store, error) {
+	if err := restrictFiles(path); err != nil {
+		return nil, err
+	}
 	pragmas := "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	db, err := sql.Open("sqlite", "file:"+path+"?"+pragmas+"&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
+	// secure_delete overwrites deleted rows (old salts, expired logins) with
+	// zeros instead of leaving them in free pages of the file.
+	db, err := sql.Open("sqlite", "file:"+path+"?"+pragmas+"&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=secure_delete(1)")
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +175,24 @@ func Open(path string) (*Store, error) {
 	rdb.SetMaxIdleConns(readers)
 	s.rdb = rdb
 	return s, nil
+}
+
+// restrictFiles makes the database readable by its owner only. It holds the
+// day's salt, from which today's visitor hashes could be brute-forced back
+// to IP addresses, and the login and password hashes. SQLite gives the -wal
+// and -shm files the database file's permissions.
+func restrictFiles(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	f.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
@@ -305,10 +331,25 @@ func (s *Store) SiteByDomain(ctx context.Context, domain string) (Site, error) {
 	return st, err
 }
 
+// Errors from the add/delete methods that are safe to show to the admin.
+var (
+	ErrInvalidDomain = errors.New("invalid domain")
+	ErrGoalKind      = errors.New("a goal needs either an event name or a page path")
+	ErrEventName     = errors.New("event name is too long")
+	ErrGoalPath      = errors.New("page paths start with /")
+	ErrCurrency      = errors.New("revenue needs a 3-letter currency code and an event goal")
+	ErrFunnelName    = errors.New("a funnel needs a name")
+	ErrFunnelSteps   = errors.New("a funnel needs 2 to 8 steps")
+)
+
+// hostnameRe accepts DNS hostnames (internationalized ones in their xn--
+// form) and IPv4 addresses.
+var hostnameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+
 func (s *Store) AddSite(ctx context.Context, domain string) error {
 	domain = NormalizeDomain(domain)
-	if domain == "" || strings.ContainsAny(domain, " \t") {
-		return errors.New("invalid domain")
+	if len(domain) > 253 || !hostnameRe.MatchString(domain) {
+		return ErrInvalidDomain
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sites(domain, created_at) VALUES(?, ?)`, domain, time.Now().Unix())
 	return err
@@ -432,36 +473,38 @@ type Leave struct {
 	Engaged         *int64 // ms
 }
 
-func (s *Store) RecordLeave(ctx context.Context, l Leave) error {
+// It reports whether the visitor had a current visit; without one nothing is
+// stored.
+func (s *Store) RecordLeave(ctx context.Context, l Leave) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	now := l.Time.Unix()
 	sessionID, err := currentSession(ctx, tx, l.SiteID, l.Visitor, now)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return false, nil
 	} else if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seen = MAX(last_seen, ?) WHERE id = ?`, now, sessionID); err != nil {
-		return err
+		return false, err
 	}
 	const target = `(SELECT id FROM events WHERE session_id = ? AND name = 'pageview' AND path = ? ORDER BY ts DESC, id DESC LIMIT 1)`
 	if l.Scroll != nil {
 		if _, err := tx.ExecContext(ctx, `UPDATE events SET scroll = MAX(COALESCE(scroll, 0), ?) WHERE id = `+target,
 			*l.Scroll, sessionID, l.Path); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if l.Engaged != nil {
 		if _, err := tx.ExecContext(ctx, `UPDATE events SET engaged = COALESCE(engaged, 0) + ? WHERE id = `+target,
 			*l.Engaged, sessionID, l.Path); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return tx.Commit()
+	return true, tx.Commit()
 }
 
 type Vitals struct {
@@ -522,13 +565,13 @@ func (s *Store) AddGoal(ctx context.Context, g Goal) error {
 	g.Currency = strings.ToUpper(strings.TrimSpace(g.Currency))
 	switch {
 	case (g.EventName == "") == (g.PagePath == ""):
-		return errors.New("a goal needs either an event name or a page path")
+		return ErrGoalKind
 	case len(g.EventName) > 64:
-		return errors.New("event name is too long")
-	case g.PagePath != "" && !strings.HasPrefix(g.PagePath, "/"):
-		return errors.New("page paths start with /")
+		return ErrEventName
+	case g.PagePath != "" && (!strings.HasPrefix(g.PagePath, "/") || len(g.PagePath) > 512):
+		return ErrGoalPath
 	case g.Currency != "" && (len(g.Currency) != 3 || g.PagePath != ""):
-		return errors.New("revenue needs a 3-letter currency code and an event goal")
+		return ErrCurrency
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO goals(site_id, event_name, page_path, currency, created_at) VALUES(?, ?, ?, ?, ?)`,
@@ -585,10 +628,10 @@ func (s *Store) Funnels(ctx context.Context, siteID int64) ([]Funnel, error) {
 func (s *Store) AddFunnel(ctx context.Context, f Funnel) error {
 	f.Name = strings.TrimSpace(f.Name)
 	if f.Name == "" || len(f.Name) > 100 {
-		return errors.New("a funnel needs a name")
+		return ErrFunnelName
 	}
 	if len(f.Steps) < 2 || len(f.Steps) > 8 {
-		return errors.New("a funnel needs 2 to 8 steps")
+		return ErrFunnelSteps
 	}
 	steps, _ := json.Marshal(f.Steps)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO funnels(site_id, name, steps, created_at) VALUES(?, ?, ?, ?)`,
@@ -634,6 +677,20 @@ func (s *Store) DailySalt(ctx context.Context, day string) ([]byte, error) {
 		return nil, err
 	}
 	return salt, tx.Commit()
+}
+
+// PurgeSalts deletes the salt of every day except keepDay, even when no
+// beacon has arrived yet today to trigger the rotation, and checkpoints the
+// write-ahead log so the deleted salts don't linger in it.
+func (s *Store) PurgeSalts(ctx context.Context, keepDay string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM salts WHERE day <> ?`, keepDay)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		_, err = s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	}
+	return err
 }
 
 // Secret returns a persistent random secret stored under key, generating it

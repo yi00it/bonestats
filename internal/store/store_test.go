@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -105,5 +107,67 @@ func TestReadsDoNotBlockWrites(t *testing.T) {
 	}
 	if _, err := s.rdb.ExecContext(ctx, `DELETE FROM sites`); err == nil {
 		t.Error("read-only pool accepted a write")
+	}
+}
+
+func TestDatabaseIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	os.WriteFile(path, nil, 0o644) // an existing, world-readable file is tightened too
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.DailySalt(context.Background(), "2026-01-01"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := fi.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s has mode %o, want 600", filepath.Base(p), mode)
+		}
+	}
+}
+
+func TestAddSiteValidatesDomain(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, ok := range []string{"example.com", "https://www.shop.example.co.uk/path", "localhost", "xn--bcher-kva.example", "192.168.1.5:8080"} {
+		if err := s.AddSite(ctx, ok); err != nil {
+			t.Errorf("AddSite(%q): %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "exa mple.com", `"><script>`, "-example.com", "example..com", "bücher.example", "*.example.com"} {
+		if err := s.AddSite(ctx, bad); !errors.Is(err, ErrInvalidDomain) {
+			t.Errorf("AddSite(%q) = %v, want ErrInvalidDomain", bad, err)
+		}
+	}
+}
+
+func TestPurgeSalts(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	old, _ := s.DailySalt(ctx, "2026-01-01")
+	if err := s.PurgeSalts(ctx, "2026-01-02"); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM salts`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d salts left after the day changed", n)
+	}
+	if again, _ := s.DailySalt(ctx, "2026-01-01"); string(again) == string(old) {
+		t.Error("purged salt came back")
 	}
 }

@@ -6,15 +6,18 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"math"
+	"net"
 	"net/http"
-	"net/url"
+	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"bonestats/internal/collect"
@@ -27,22 +30,33 @@ var templateFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
-const cookieName = "bs_auth"
+// The login cookie. Over HTTPS it gets the __Host- prefix, which makes
+// browsers insist on Secure, Path=/ and no Domain attribute.
+const (
+	cookieName       = "bs_auth"
+	secureCookieName = "__Host-bs_auth"
+)
+
 const sessionLength = 30 * 24 * time.Hour
+
+// maxForm caps the body of dashboard form posts, including the public login.
+const maxForm = 64 << 10
 
 var failDelay = time.Second
 
 type Server struct {
-	Store      *store.Store
-	Password   string
-	TrustProxy bool // read the client IP from X-Forwarded-For (login rate limit)
-	Location   *time.Location
-	Retention  int  // days, shown in the UI
-	GeoEnabled bool // shows the DB-IP attribution
-	Collector  http.Handler
+	Store       *store.Store
+	Password    string
+	ProxyHeader string // header the reverse proxy puts the client IP in (login rate limit)
+	AllowHTTP   bool   // allow logging in over plain HTTP from other hosts than localhost
+	Location    *time.Location
+	Retention   int  // days, shown in the UI
+	GeoEnabled  bool // shows the DB-IP attribution
+	Collector   http.Handler
 
-	tmpl    map[string]*template.Template
-	limiter limiter
+	tmpl      map[string]*template.Template
+	limiter   limiter
+	proxyWarn sync.Once
 }
 
 func (s *Server) Handler() http.Handler {
@@ -61,21 +75,45 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheFor(24*time.Hour, files)))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
-	// Dashboard forms reject cross-site POSTs (CSRF) via Sec-Fetch-Site/Origin.
+	// Dashboard forms reject cross-site POSTs (CSRF) via Sec-Fetch-Site/Origin,
+	// and their bodies are capped.
 	csrf := http.NewCrossOriginProtection()
+	form := func(h http.Handler) http.Handler {
+		return csrf.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxForm)
+			h.ServeHTTP(w, r)
+		}))
+	}
 	mux.HandleFunc("GET /login", s.loginPage)
-	mux.Handle("POST /login", csrf.Handler(http.HandlerFunc(s.login)))
-	mux.Handle("POST /logout", csrf.Handler(http.HandlerFunc(s.logout)))
+	mux.Handle("POST /login", form(http.HandlerFunc(s.login)))
+	mux.Handle("POST /logout", form(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /{$}", s.auth(s.dashboard))
 	mux.Handle("GET /sites", s.auth(s.sitesPage))
-	mux.Handle("POST /sites", csrf.Handler(s.auth(s.addSite)))
-	mux.Handle("POST /sites/{id}/delete", csrf.Handler(s.auth(s.deleteSite)))
+	mux.Handle("POST /sites", form(s.auth(s.addSite)))
+	mux.Handle("POST /sites/{id}/delete", form(s.auth(s.deleteSite)))
 	mux.Handle("GET /sites/{id}/goals", s.auth(s.goalsPage))
-	mux.Handle("POST /sites/{id}/goals", csrf.Handler(s.auth(s.addGoal)))
-	mux.Handle("POST /sites/{id}/goals/{gid}/delete", csrf.Handler(s.auth(s.deleteGoal)))
-	mux.Handle("POST /sites/{id}/funnels", csrf.Handler(s.auth(s.addFunnel)))
-	mux.Handle("POST /sites/{id}/funnels/{fid}/delete", csrf.Handler(s.auth(s.deleteFunnel)))
-	return securityHeaders(mux)
+	mux.Handle("POST /sites/{id}/goals", form(s.auth(s.addGoal)))
+	mux.Handle("POST /sites/{id}/goals/{gid}/delete", form(s.auth(s.deleteGoal)))
+	mux.Handle("POST /sites/{id}/funnels", form(s.auth(s.addFunnel)))
+	mux.Handle("POST /sites/{id}/funnels/{fid}/delete", form(s.auth(s.deleteFunnel)))
+	return s.checkProxy(securityHeaders(mux))
+}
+
+// checkProxy logs once when requests arrive through a reverse proxy that
+// bonestats wasn't told about: every client then seems to have the proxy's
+// IP, so visitors are miscounted and one client's failed logins lock out
+// everyone.
+func (s *Server) checkProxy(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.ProxyHeader == "" && (r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "") {
+			if ip := collect.ClientIP(r, ""); ip.IsLoopback() || ip.IsPrivate() {
+				s.proxyWarn.Do(func() {
+					log.Printf("warning: requests come through a reverse proxy (%s), but BONESTATS_PROXY_HEADER is not set; see the README", ip)
+				})
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // ---- auth ----
@@ -87,8 +125,37 @@ func tokenHash(token string) []byte {
 	return h[:]
 }
 
+// https reports whether the browser reached us over HTTPS, directly or
+// through a TLS-terminating proxy. A forged X-Forwarded-Proto only changes
+// the cookie the forger gets, so it is harmless.
+func https(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+// localHost reports whether the dashboard was opened as localhost or a
+// loopback address, where plain HTTP never leaves the machine.
+func localHost(r *http.Request) bool {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	return err == nil && ip.IsLoopback()
+}
+
+func sessionCookieName(r *http.Request) string {
+	if https(r) {
+		return secureCookieName
+	}
+	return cookieName
+}
+
 func (s *Server) authenticated(r *http.Request) bool {
-	c, err := r.Cookie(cookieName)
+	c, err := r.Cookie(sessionCookieName(r))
 	if err != nil || c.Value == "" {
 		return false
 	}
@@ -114,21 +181,32 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	ip := collect.ClientIP(r, s.TrustProxy)
-	if s.limiter.blocked(ip) {
+	// The password would cross the network in plain text.
+	if !https(r) && !localHost(r) && !s.AllowHTTP {
+		w.WriteHeader(http.StatusForbidden)
+		s.render(w, "login", map[string]any{"Title": "Log in",
+			"Error": "Log in over HTTPS. To allow plain HTTP on a trusted network, set BONESTATS_ALLOW_HTTP=true."})
+		return
+	}
+	// Read the whole form before reserving an attempt, then compare.
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	ip := collect.ClientIP(r, s.ProxyHeader)
+	if !s.limiter.attempt(ip) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		s.render(w, "login", map[string]any{"Title": "Log in", "Error": "Too many failed attempts. Try again in a few minutes."})
 		return
 	}
 	pw := r.PostFormValue("password")
 	if subtle.ConstantTimeCompare([]byte(pw), []byte(s.Password)) != 1 {
-		s.limiter.fail(ip)
 		time.Sleep(failDelay) // slow down guessing
 		w.WriteHeader(http.StatusUnauthorized)
 		s.render(w, "login", map[string]any{"Title": "Log in", "Error": "Wrong password."})
 		return
 	}
-	s.limiter.reset(ip)
+	s.limiter.success(ip)
 	token := rand.Text()
 	if err := s.Store.AddLogin(r.Context(), tokenHash(token), time.Now().Add(sessionLength)); err != nil {
 		serverError(w, err)
@@ -139,7 +217,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+	if c, err := r.Cookie(sessionCookieName(r)); err == nil && c.Value != "" {
 		if err := s.Store.DeleteLogin(r.Context(), tokenHash(c.Value)); err != nil {
 			serverError(w, err)
 			return
@@ -151,10 +229,41 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	return &http.Cookie{
-		Name: cookieName, Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-		SameSite: http.SameSiteStrictMode,
+		Name: sessionCookieName(r), Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true,
+		Secure: https(r), SameSite: http.SameSiteStrictMode,
 	}
+}
+
+// Messages for the ?error= codes of the sites and goals pages. Only these
+// fixed texts can be shown, so a crafted link can't put words in the UI.
+var errorMessages = map[string]string{
+	"exists":       "That already exists.",
+	"domain":       "Enter a valid domain such as example.com (internationalized domains in their xn-- form).",
+	"goal-kind":    store.ErrGoalKind.Error() + ".",
+	"event-name":   "The event name is too long.",
+	"goal-path":    "Page paths start with / and are at most 512 characters.",
+	"currency":     "Revenue needs a 3-letter currency code and an event goal.",
+	"funnel-name":  "A funnel needs a name of at most 100 characters.",
+	"funnel-steps": "A funnel needs 2 to 8 steps.",
+	"failed":       "That didn't work. The server log has the details.",
+}
+
+// errorCode maps an error from the store to one of errorMessages.
+func errorCode(err error) string {
+	for code, e := range map[string]error{
+		"domain": store.ErrInvalidDomain, "goal-kind": store.ErrGoalKind, "event-name": store.ErrEventName,
+		"goal-path": store.ErrGoalPath, "currency": store.ErrCurrency,
+		"funnel-name": store.ErrFunnelName, "funnel-steps": store.ErrFunnelSteps,
+	} {
+		if errors.Is(err, e) {
+			return code
+		}
+	}
+	if strings.Contains(err.Error(), "UNIQUE") {
+		return "exists"
+	}
+	log.Printf("error: %v", err)
+	return "failed"
 }
 
 // ---- sites ----
@@ -166,25 +275,21 @@ func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+	if https(r) {
 		scheme = "https"
 	}
 	s.render(w, "sites", map[string]any{
 		"Title":     "Sites",
 		"Sites":     sites,
 		"BaseURL":   scheme + "://" + r.Host,
-		"Error":     r.URL.Query().Get("error"),
+		"Error":     errorMessages[r.URL.Query().Get("error")],
 		"Retention": s.Retention,
 	})
 }
 
 func (s *Server) addSite(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.AddSite(r.Context(), r.PostFormValue("domain")); err != nil {
-		msg := "Could not add site: " + err.Error()
-		if strings.Contains(err.Error(), "UNIQUE") {
-			msg = "That site already exists."
-		}
-		http.Redirect(w, r, "/sites?error="+url.QueryEscape(msg), http.StatusSeeOther)
+		http.Redirect(w, r, "/sites?error="+errorCode(err), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/sites", http.StatusSeeOther)
