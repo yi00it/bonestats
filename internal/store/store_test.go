@@ -80,3 +80,30 @@ func TestVitalsP75(t *testing.T) {
 		t.Errorf("by page = %+v, %v", pages, err)
 	}
 }
+
+// A dashboard query in progress must not hold up writes from the collector.
+func TestReadsDoNotBlockWrites(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.AddSite(ctx, "example.com")
+	site, _ := s.SiteByDomain(ctx, "example.com")
+
+	rows, err := s.rdb.QueryContext(ctx, `SELECT id FROM sites`) // left open, like a slow query
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := s.RecordEvent(wctx, Event{SiteID: site.ID, Time: time.Now(), Visitor: 1, Name: "pageview", Path: "/"}); err != nil {
+		t.Fatalf("write blocked by an open read: %v", err)
+	}
+	if _, err := s.rdb.ExecContext(ctx, `DELETE FROM sites`); err == nil {
+		t.Error("read-only pool accepted a write")
+	}
+}

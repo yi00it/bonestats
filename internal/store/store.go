@@ -21,9 +21,16 @@ const SessionTimeout = 30 * time.Minute
 
 const schemaVersion = 3
 
+// Store uses two pools: db, the single writer, and rdb, read-only
+// connections for dashboard queries. With WAL, readers never block the
+// writer, so slow dashboard queries can't hold up incoming beacons.
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	rdb *sql.DB
 }
+
+// readers is the size of the read-only pool.
+const readers = 4
 
 // Visit-level attributes live on sessions (they describe where a visit came
 // from and on what device), so filtering by them covers every pageview of the
@@ -137,8 +144,8 @@ CREATE TABLE IF NOT EXISTS logins (
 `
 
 func Open(path string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)", path)
-	db, err := sql.Open("sqlite", dsn)
+	pragmas := "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", "file:"+path+"?"+pragmas+"&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +157,21 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// Opened after the migration has switched the file to WAL.
+	rdb, err := sql.Open("sqlite", "file:"+path+"?"+pragmas+"&_pragma=query_only(1)")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(readers)
+	rdb.SetMaxIdleConns(readers)
+	s.rdb = rdb
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	return errors.Join(s.rdb.Close(), s.db.Close())
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	var version int
@@ -260,7 +278,7 @@ func NormalizeDomain(d string) string {
 }
 
 func (s *Store) Sites(ctx context.Context) ([]Site, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain, created_at FROM sites ORDER BY domain`)
+	rows, err := s.rdb.QueryContext(ctx, `SELECT id, domain, created_at FROM sites ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +299,7 @@ func (s *Store) Sites(ctx context.Context) ([]Site, error) {
 func (s *Store) SiteByDomain(ctx context.Context, domain string) (Site, error) {
 	var st Site
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain, created_at FROM sites WHERE domain = ?`, domain).
+	err := s.rdb.QueryRowContext(ctx, `SELECT id, domain, created_at FROM sites WHERE domain = ?`, domain).
 		Scan(&st.ID, &st.Domain, &created)
 	st.CreatedAt = time.Unix(created, 0)
 	return st, err
@@ -304,7 +322,7 @@ func (s *Store) DeleteSite(ctx context.Context, id int64) error {
 // FirstVisit returns when the site's oldest stored visit started.
 func (s *Store) FirstVisit(ctx context.Context, siteID int64) (time.Time, bool) {
 	var ts sql.NullInt64
-	s.db.QueryRowContext(ctx, `SELECT MIN(started_at) FROM sessions WHERE site_id = ?`, siteID).Scan(&ts)
+	s.rdb.QueryRowContext(ctx, `SELECT MIN(started_at) FROM sessions WHERE site_id = ?`, siteID).Scan(&ts)
 	return time.Unix(ts.Int64, 0), ts.Valid
 }
 
@@ -481,7 +499,7 @@ func (g Goal) Name() string {
 }
 
 func (s *Store) Goals(ctx context.Context, siteID int64) ([]Goal, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.rdb.QueryContext(ctx, `
 		SELECT id, site_id, event_name, page_path, currency FROM goals WHERE site_id = ? ORDER BY id`, siteID)
 	if err != nil {
 		return nil, err
@@ -546,7 +564,7 @@ type Funnel struct {
 }
 
 func (s *Store) Funnels(ctx context.Context, siteID int64) ([]Funnel, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, site_id, name, steps FROM funnels WHERE site_id = ? ORDER BY id`, siteID)
+	rows, err := s.rdb.QueryContext(ctx, `SELECT id, site_id, name, steps FROM funnels WHERE site_id = ? ORDER BY id`, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -651,7 +669,7 @@ func (s *Store) AddLogin(ctx context.Context, tokenHash []byte, expires time.Tim
 
 func (s *Store) LoginValid(ctx context.Context, tokenHash []byte) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM logins WHERE token_hash = ? AND expires >= ?`,
+	err := s.rdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM logins WHERE token_hash = ? AND expires >= ?`,
 		tokenHash, time.Now().Unix()).Scan(&n)
 	return n > 0, err
 }

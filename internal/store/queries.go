@@ -45,14 +45,14 @@ func (s *Store) Summary(ctx context.Context, q Query) (Summary, error) {
 	from, args := q.sessionScope()
 	var bounces int64
 	var dur sql.NullFloat64
-	err := s.db.QueryRowContext(ctx, `
+	err := s.rdb.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0), AVG(s.last_seen - s.started_at) `+from,
 		args...).Scan(&sum.Visitors, &sum.Visits, &bounces, &dur)
 	if err != nil {
 		return sum, err
 	}
 	from, args = q.eventScope()
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+from+` AND e.name = 'pageview'`, args...).Scan(&sum.Pageviews); err != nil {
+	if err := s.rdb.QueryRowContext(ctx, `SELECT COUNT(*) `+from+` AND e.name = 'pageview'`, args...).Scan(&sum.Pageviews); err != nil {
 		return sum, err
 	}
 	if sum.Visits > 0 {
@@ -66,7 +66,7 @@ func (s *Store) Summary(ctx context.Context, q Query) (Summary, error) {
 // CurrentVisitors counts visitors seen in the last five minutes.
 func (s *Store) CurrentVisitors(ctx context.Context, siteID int64) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `
+	err := s.rdb.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT visitor) FROM sessions WHERE site_id = ? AND last_seen >= ?`,
 		siteID, time.Now().Add(-5*time.Minute).Unix()).Scan(&n)
 	return n, err
@@ -147,7 +147,7 @@ func (s *Store) Timeseries(ctx context.Context, q Query, iv Interval) (Series, e
 	from, args := q.sessionScope()
 	from = strings.Replace(from, "FROM sessions s WHERE ",
 		"FROM b CROSS JOIN sessions s WHERE s.started_at >= b.lo AND s.started_at < b.hi AND ", 1)
-	rows, err := s.db.QueryContext(ctx, bucketTable+`
+	rows, err := s.rdb.QueryContext(ctx, bucketTable+`
 		SELECT b.k, COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0),
 			COALESCE(SUM(s.last_seen - s.started_at), 0) `+from+` GROUP BY b.k`, append([]any{ranges}, args...)...)
 	if err != nil {
@@ -170,7 +170,7 @@ func (s *Store) Timeseries(ctx context.Context, q Query, iv Interval) (Series, e
 	from, args = q.eventScope()
 	from = strings.Replace(from, "FROM events e ", "FROM b CROSS JOIN events e ", 1)
 	from = strings.Replace(from, " WHERE ", " WHERE e.ts >= b.lo AND e.ts < b.hi AND ", 1)
-	rows, err = s.db.QueryContext(ctx, bucketTable+`SELECT b.k, COUNT(*) `+from+` AND e.name = 'pageview' GROUP BY b.k`,
+	rows, err = s.rdb.QueryContext(ctx, bucketTable+`SELECT b.k, COUNT(*) `+from+` AND e.name = 'pageview' GROUP BY b.k`,
 		append([]any{ranges}, args...)...)
 	if err != nil {
 		return Series{}, err
@@ -252,7 +252,7 @@ func (s *Store) Breakdown(ctx context.Context, q Query, dim string, limit int) (
 func (s *Store) breakdown(ctx context.Context, q Query, dim string, limit int) ([]Row, error) {
 	if dim == "page" {
 		from, args := q.eventScope()
-		rs, err := s.db.QueryContext(ctx, `
+		rs, err := s.rdb.QueryContext(ctx, `
 			SELECT e.path, COUNT(DISTINCT e.visitor), COUNT(*), AVG(e.engaged), AVG(e.scroll) `+from+`
 			AND e.name = 'pageview' GROUP BY e.path ORDER BY 3 DESC, 2 DESC LIMIT ?`, append(args, limit)...)
 		if err != nil {
@@ -287,7 +287,7 @@ func (s *Store) breakdown(ctx context.Context, q Query, dim string, limit int) (
 		hint = "MAX(s.country)"
 	}
 	from, args := q.sessionScope()
-	rs, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+	rs, err := s.rdb.QueryContext(ctx, fmt.Sprintf(`
 		SELECT s.%[1]s, %[2]s, COUNT(DISTINCT s.visitor), COUNT(*) %[3]s AND s.%[1]s <> ''
 		GROUP BY s.%[1]s ORDER BY 3 DESC, 4 DESC LIMIT ?`, d.Col, hint, from), append(args, limit)...)
 	if err != nil {
@@ -344,7 +344,7 @@ func (s *Store) GoalStats(ctx context.Context, q Query) ([]GoalStat, error) {
 		cond, cargs := GoalCond(g, "e")
 		st := GoalStat{Goal: g}
 		var rev sql.NullFloat64
-		err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT e.visitor), COUNT(*), SUM(e.revenue) `+from+` AND `+cond,
+		err := s.rdb.QueryRowContext(ctx, `SELECT COUNT(DISTINCT e.visitor), COUNT(*), SUM(e.revenue) `+from+` AND `+cond,
 			append(append([]any{}, args...), cargs...)...).Scan(&st.Visitors, &st.Count, &rev)
 		if err != nil {
 			return nil, err
@@ -394,7 +394,7 @@ func (q Query) propScope() (string, []any) {
 func (s *Store) PropKeys(ctx context.Context, q Query) ([]string, error) {
 	from, args := q.propScope()
 	from = strings.Replace(from, " WHERE ", ", json_each(e.props) j WHERE ", 1)
-	rs, err := s.db.QueryContext(ctx, `SELECT j.key, COUNT(*) `+from+` GROUP BY j.key ORDER BY 2 DESC LIMIT 20`, args...)
+	rs, err := s.rdb.QueryContext(ctx, `SELECT j.key, COUNT(*) `+from+` GROUP BY j.key ORDER BY 2 DESC LIMIT 20`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +426,7 @@ func (s *Store) PropValues(ctx context.Context, q Query, key string, limit int) 
 	}
 	// revenue per value, when the filtered goal is a revenue goal
 	if g, ok := q.GoalFilter(); ok && g.Currency != "" {
-		rs, err := s.db.QueryContext(ctx, `SELECT CAST(json_extract(e.props, ?) AS TEXT) AS v, SUM(e.revenue) `+from+`
+		rs, err := s.rdb.QueryContext(ctx, `SELECT CAST(json_extract(e.props, ?) AS TEXT) AS v, SUM(e.revenue) `+from+`
 			AND v IS NOT NULL GROUP BY v`, append([]any{path}, args...)...)
 		if err != nil {
 			return nil, err
@@ -479,7 +479,7 @@ func (s *Store) FunnelStats(ctx context.Context, q Query, f Funnel) ([]FunnelSte
 
 	where, args := q.sessionScope()
 	where = where[len("FROM sessions s "):]
-	rs, err := s.db.QueryContext(ctx, `SELECT e.session_id, s.visitor, e.name, e.path
+	rs, err := s.rdb.QueryContext(ctx, `SELECT e.session_id, s.visitor, e.name, e.path
 		FROM sessions s JOIN events e ON e.session_id = s.id `+where+` ORDER BY e.session_id, e.ts, e.id`, args...)
 	if err != nil {
 		return nil, err
@@ -521,7 +521,7 @@ func (s *Store) FunnelStats(ctx context.Context, q Query, f Funnel) ([]FunnelSte
 }
 
 func (s *Store) rows(ctx context.Context, query string, args ...any) ([]Row, error) {
-	rs, err := s.db.QueryContext(ctx, query, args...)
+	rs, err := s.rdb.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +585,7 @@ func (s *Store) VitalsSummary(ctx context.Context, q Query) (map[string]VitalSta
 	for _, m := range VitalMetrics {
 		var st VitalStat
 		var p75 sql.NullFloat64
-		err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
+		err := s.rdb.QueryRowContext(ctx, fmt.Sprintf(`
 			SELECT MIN(CASE WHEN pr >= 0.75 THEN %[1]s END), COUNT(*) FROM (
 				SELECT %[1]s, cume_dist() OVER (ORDER BY %[1]s) AS pr %[2]s AND %[1]s IS NOT NULL)`, m, from),
 			args...).Scan(&p75, &st.Samples)
@@ -601,7 +601,7 @@ func (s *Store) VitalsSummary(ctx context.Context, q Query) (map[string]VitalSta
 // VitalsByPage returns p75 of every metric for the pages with the most samples.
 func (s *Store) VitalsByPage(ctx context.Context, q Query, limit int) ([]PageVitals, error) {
 	from, args := q.vitalsScope()
-	rows, err := s.db.QueryContext(ctx, `SELECT path, COUNT(*) `+from+` GROUP BY path ORDER BY 2 DESC LIMIT ?`, append(args, limit)...)
+	rows, err := s.rdb.QueryContext(ctx, `SELECT path, COUNT(*) `+from+` GROUP BY path ORDER BY 2 DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +622,7 @@ func (s *Store) VitalsByPage(ctx context.Context, q Query, limit int) ([]PageVit
 	}
 
 	for _, m := range VitalMetrics {
-		rs, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		rs, err := s.rdb.QueryContext(ctx, fmt.Sprintf(`
 			SELECT path, MIN(%[1]s) FROM (
 				SELECT path, %[1]s, cume_dist() OVER (PARTITION BY path ORDER BY %[1]s) AS pr %[2]s AND %[1]s IS NOT NULL)
 			WHERE pr >= 0.75 GROUP BY path`, m, from), args...)
