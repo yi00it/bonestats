@@ -124,3 +124,7 @@ internal/collect           /api/event: validation, hashing, UA parsing, GeoIP
 internal/web               dashboard, goals pages, login, templates, static files (bs.js + add-ons, uPlot, jsvectormap)
 internal/demo              demo data generator
 ```
+
+## License
+
+bonestats is released under the [MIT License](LICENSE). The bundled uPlot and jsvectormap libraries are MIT-licensed too; the DB-IP Lite data you download is CC BY 4.0.
