@@ -67,10 +67,17 @@ type Server struct {
 	// /login and /logout itself.
 	Authenticate func(r *http.Request) (*store.Store, bool)
 
+	// Links are extra entries for the header navigation, such as the
+	// host's account page.
+	Links []Link
+
 	tmpl      map[string]*template.Template
 	limiter   limiter
 	proxyWarn sync.Once
 }
+
+// Link is an entry in the header navigation.
+type Link struct{ Label, URL string }
 
 func (s *Server) Handler() http.Handler {
 	static, _ := fs.Sub(staticFS, "static")
@@ -84,7 +91,7 @@ func (s *Server) Handler() http.Handler {
 
 	s.tmpl = map[string]*template.Template{}
 	for _, page := range []string{"dashboard", "sites", "goals", "login"} {
-		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }}).
+		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }, "links": func() []Link { return s.Links }}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
 

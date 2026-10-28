@@ -488,3 +488,12 @@ func TestAuthenticateSelectsStore(t *testing.T) {
 		t.Error("built-in login still served")
 	}
 }
+
+func TestNavLinks(t *testing.T) {
+	s, get := dashboardClient(t)
+	s.Links = []Link{{"Account", "/account"}}
+	addSite(t, s, "example.com")
+	if body := get("/sites").Body.String(); !strings.Contains(body, `<a href="/account">Account</a>`) {
+		t.Error("extra nav link missing")
+	}
+}
