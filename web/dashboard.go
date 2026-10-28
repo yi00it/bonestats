@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 // ---- links that keep the dashboard state ----
@@ -204,6 +204,7 @@ var opLabels = map[string]string{store.OpIs: "is", store.OpIsNot: "is not", stor
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	st := s.store(r)
 	qs := r.URL.Query()
 
 	// The "add filter" form submits fdim/fop/fval; fold them into f and redirect.
@@ -218,7 +219,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sites, err := s.Store.Sites(ctx)
+	sites, err := st.Sites(ctx)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -228,9 +229,9 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	site := sites[0]
-	for _, st := range sites {
-		if st.Domain == qs.Get("site") {
-			site = st
+	for _, other := range sites {
+		if other.Domain == qs.Get("site") {
+			site = other
 		}
 	}
 	qs.Set("site", site.Domain)
@@ -239,19 +240,19 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	n := nav{qs}
 
-	goals, err := s.Store.Goals(ctx, site.ID)
+	goals, err := st.Goals(ctx, site.ID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	funnels, err := s.Store.Funnels(ctx, site.ID)
+	funnels, err := st.Funnels(ctx, site.ID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 
 	now := time.Now().In(s.Location)
-	first, ok := s.Store.FirstVisit(ctx, site.ID)
+	first, ok := st.FirstVisit(ctx, site.ID)
 	if !ok {
 		first = now
 	}
@@ -271,7 +272,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	q := store.Query{SiteID: site.ID, From: from, To: to, Location: s.Location, Filters: filters, Goals: goals}
 
-	d := &dashData{ctx: ctx, s: s, q: q, n: n}
+	d := &dashData{ctx: ctx, st: st, q: q, n: n}
 
 	// KPIs, compared with the previous period up to the same point in time.
 	summary := d.summary(q)
@@ -351,7 +352,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		d.card("OS", "os", "Visits", 10), d.card("OS version", "os_version", "Visits", 10),
 		d.card("Device", "device", "Visits", 10), d.card("Screen size", "screen", "Visits", 10),
 	}}
-	mapRows := d.rows(s.Store.Breakdown(ctx, q, "country", 300))
+	mapRows := d.rows(st.Breakdown(ctx, q, "country", 300))
 	mapData := map[string]int64{}
 	for _, row := range mapRows {
 		mapData[row.Label] = row.Visitors
@@ -359,16 +360,16 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	mapJSON, _ := json.Marshal(mapData)
 
 	// Goals, events, properties, funnels.
-	goalStats, err := s.Store.GoalStats(ctx, q)
+	goalStats, err := st.GoalStats(ctx, q)
 	d.check(err)
 	for i := range goalStats {
 		goalStats[i].Link = n.AddFilter("goal", goalStats[i].Goal.Name())
 	}
-	events := d.rows(s.Store.CustomEvents(ctx, q, 20))
+	events := d.rows(st.CustomEvents(ctx, q, 20))
 	for i := range events {
 		events[i].Link = n.AddFilter("goal", events[i].Label)
 	}
-	propKeys, err := s.Store.PropKeys(ctx, q)
+	propKeys, err := st.PropKeys(ctx, q)
 	d.check(err)
 	propKey := qs.Get("prop")
 	if len(propKeys) > 0 && !contains(propKeys, propKey) {
@@ -376,7 +377,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	var propRows []store.Row
 	if propKey != "" {
-		propRows = d.rows(s.Store.PropValues(ctx, q, propKey, 15))
+		propRows = d.rows(st.PropValues(ctx, q, propKey, 15))
 		for i := range propRows {
 			propRows[i].Link = n.AddFilter("prop:"+propKey, propRows[i].Label)
 		}
@@ -406,15 +407,15 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	var funnelSteps []store.FunnelStep
 	if funnel != nil {
-		funnelSteps, err = s.Store.FunnelStats(ctx, q, *funnel)
+		funnelSteps, err = st.FunnelStats(ctx, q, *funnel)
 		d.check(err)
 	}
 
-	current, err := s.Store.CurrentVisitors(ctx, site.ID)
+	current, err := st.CurrentVisitors(ctx, site.ID)
 	d.check(err)
-	vitals, err := s.Store.VitalsSummary(ctx, q)
+	vitals, err := st.VitalsSummary(ctx, q)
 	d.check(err)
-	vitalPages, err := s.Store.VitalsByPage(ctx, q, 10)
+	vitalPages, err := st.VitalsByPage(ctx, q, 10)
 	d.check(err)
 	if d.err != nil {
 		serverError(w, d.err)
@@ -476,7 +477,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 // without checking each one.
 type dashData struct {
 	ctx context.Context
-	s   *Server
+	st  *store.Store
 	q   store.Query
 	n   nav
 	err error
@@ -494,19 +495,19 @@ func (d *dashData) rows(rows []store.Row, err error) []store.Row {
 }
 
 func (d *dashData) summary(q store.Query) store.Summary {
-	s, err := d.s.Store.Summary(d.ctx, q)
+	s, err := d.st.Summary(d.ctx, q)
 	d.check(err)
 	return s
 }
 
 func (d *dashData) series(q store.Query, iv store.Interval) store.Series {
-	s, err := d.s.Store.Timeseries(d.ctx, q, iv)
+	s, err := d.st.Timeseries(d.ctx, q, iv)
 	d.check(err)
 	return s
 }
 
 func (d *dashData) card(title, dim, head string, limit int) card {
-	c := card{Title: title, Dim: dim, Head: head, Rows: d.rows(d.s.Store.Breakdown(d.ctx, d.q, dim, limit))}
+	c := card{Title: title, Dim: dim, Head: head, Rows: d.rows(d.st.Breakdown(d.ctx, d.q, dim, limit))}
 	for i := range c.Rows {
 		c.Rows[i].Link = d.n.AddFilter(dim, c.Rows[i].Label)
 		c.HasCR = c.HasCR || c.Rows[i].CR != nil

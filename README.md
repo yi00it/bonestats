@@ -159,7 +159,7 @@ The DB-IP Lite data is licensed CC BY 4.0. The dashboard shows the required attr
 
 ## The tracking script
 
-`internal/web/static/bs.js` is hand-minified to keep it tiny (about 1.9 KB raw, 1.2 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
+`web/static/bs.js` is hand-minified to keep it tiny (about 1.9 KB raw, 1.2 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
 
 1. Stops immediately (and makes `bonestats()` do nothing) if the visitor sends GPC or DNT, or if it's an automated browser.
 2. Sends a `pageview` beacon on load and on SPA navigations (`history.pushState`, `popstate`). The external referrer is only sent with the first one.
@@ -174,13 +174,13 @@ Beacon fields: `d` domain, `n` name, `p` path, `w` viewport width, `r` referrer,
 
 ```
 main.go                    config, startup, retention job
-internal/store             SQLite schema and migrations, writes, filters, dashboard queries, channels
-internal/collect           /api/event: validation, hashing, UA parsing, GeoIP
-internal/web               dashboard, goals pages, login, templates, static files (bs.js + add-ons, jsvectormap, fonts)
-internal/demo              demo data generator
+store                      SQLite schema and migrations, writes, filters, dashboard queries, channels
+collect                    /api/event: validation, hashing, UA parsing, GeoIP
+web                        dashboard, goals pages, login, templates, static files (bs.js + add-ons, jsvectormap, fonts)
+demo                       demo data generator
 docs                       README images
 ```
 
 ## License
 
-bonestats is Copyright (c) 2026 yi00it and released under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You can use, modify and self-host it freely; if you run a modified version as a network service, you must make your modified source available to its users. Versions released before the switch to AGPL remain available under the MIT License. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). The bundled [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) is MIT-licensed too; its license is in `internal/web/static/LICENSE.jsvectormap.txt`. The bundled [Geist](https://github.com/vercel/geist-font) and [Doto](https://github.com/oliverlalan/Doto) fonts are under the SIL Open Font License 1.1 (`internal/web/static/fonts/OFL-*.txt`). The DB-IP Lite data you download is CC BY 4.0.
+bonestats is Copyright (c) 2026 yi00it and released under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You can use, modify and self-host it freely; if you run a modified version as a network service, you must make your modified source available to its users. Versions released before the switch to AGPL remain available under the MIT License. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). The bundled [jsvectormap](https://github.com/themustafaomar/jsvectormap) (including its world map) is MIT-licensed too; its license is in `web/static/LICENSE.jsvectormap.txt`. The bundled [Geist](https://github.com/vercel/geist-font) and [Doto](https://github.com/oliverlalan/Doto) fonts are under the SIL Open Font License 1.1 (`web/static/fonts/OFL-*.txt`). The DB-IP Lite data you download is CC BY 4.0.

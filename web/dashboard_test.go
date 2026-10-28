@@ -8,12 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 func TestWindow(t *testing.T) {
@@ -437,5 +438,53 @@ func TestDashboard(t *testing.T) {
 	}
 	if strings.Contains(body, "Pricing to signup") {
 		t.Error("fallback site shows another site's funnel")
+	}
+}
+
+// With Authenticate set, each user works in their own store and the
+// built-in password login is gone.
+func TestAuthenticateSelectsStore(t *testing.T) {
+	open := func(name, domain string) *store.Store {
+		st, err := store.Open(filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		if err := st.AddSite(context.Background(), domain); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	users := map[string]*store.Store{"alice": open("a.db", "alice.example"), "bob": open("b.db", "bob.example")}
+	s := &Server{Location: time.UTC, Collector: http.NotFoundHandler(),
+		Authenticate: func(r *http.Request) (*store.Store, bool) {
+			st, ok := users[r.Header.Get("X-Test-User")]
+			return st, ok
+		}}
+	h := s.Handler()
+	get := func(path, user string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		if user != "" {
+			r.Header.Set("X-Test-User", user)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	for _, path := range []string{"/", "/sites", "/sites/1/goals"} {
+		w := get(path, "bob")
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, w.Code)
+		}
+		if body := w.Body.String(); !strings.Contains(body, "bob.example") || strings.Contains(body, "alice.example") {
+			t.Errorf("%s: bob sees the wrong sites", path)
+		}
+	}
+	if w := get("/sites", ""); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {
+		t.Errorf("anonymous request: status %d, location %q", w.Code, w.Header().Get("Location"))
+	}
+	if w := post(h, "/login", "password=anything"); w.Code == http.StatusSeeOther {
+		t.Error("built-in login still served")
 	}
 }

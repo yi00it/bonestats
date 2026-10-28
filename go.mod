@@ -1,4 +1,4 @@
-module bonestats
+module github.com/yi00it/bonestats
 
 go 1.27.3
 

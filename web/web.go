@@ -4,6 +4,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -23,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"bonestats/internal/collect"
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/collect"
+	"github.com/yi00it/bonestats/store"
 )
 
 //go:embed templates/*.html
@@ -48,6 +49,8 @@ const maxForm = 64 << 10
 var failDelay = time.Second
 
 type Server struct {
+	// Store holds the sites and their data, and the logins of the built-in
+	// password login.
 	Store       *store.Store
 	Password    string
 	ProxyHeader string // header the reverse proxy puts the client IP in (login rate limit)
@@ -57,6 +60,12 @@ type Server struct {
 	GeoEnabled  bool // shows the DB-IP attribution
 	Collector   http.Handler
 	SourceURL   string // linked in the footer, as the AGPL asks of network services
+
+	// Authenticate, when set, replaces the built-in password login, for hosts
+	// with their own accounts and one store per customer. It returns the
+	// store of the user r is logged in as, or false. The host then serves
+	// /login and /logout itself.
+	Authenticate func(r *http.Request) (*store.Store, bool)
 
 	tmpl      map[string]*template.Template
 	limiter   limiter
@@ -96,9 +105,11 @@ func (s *Server) Handler() http.Handler {
 			h.ServeHTTP(w, r)
 		}))
 	}
-	mux.HandleFunc("GET /login", s.loginPage)
-	mux.Handle("POST /login", form(http.HandlerFunc(s.login)))
-	mux.Handle("POST /logout", form(http.HandlerFunc(s.logout)))
+	if s.Authenticate == nil {
+		mux.HandleFunc("GET /login", s.loginPage)
+		mux.Handle("POST /login", form(http.HandlerFunc(s.login)))
+		mux.Handle("POST /logout", form(http.HandlerFunc(s.logout)))
+	}
 	mux.Handle("GET /{$}", s.auth(s.dashboard))
 	mux.Handle("GET /sites", s.auth(s.sitesPage))
 	mux.Handle("POST /sites", form(s.auth(s.addSite)))
@@ -178,14 +189,29 @@ func (s *Server) authenticated(r *http.Request) bool {
 	return ok
 }
 
+type storeKey struct{}
+
+// auth lets only logged-in users through, and gives the handler their store
+// (see store).
 func (s *Server) auth(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authenticated(r) {
+		st, ok := s.Store, false
+		if s.Authenticate != nil {
+			st, ok = s.Authenticate(r)
+		} else {
+			ok = s.authenticated(r)
+		}
+		if !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		h(w, r)
+		h(w, r.WithContext(context.WithValue(r.Context(), storeKey{}, st)))
 	})
+}
+
+// store returns the logged-in user's store.
+func (s *Server) store(r *http.Request) *store.Store {
+	return r.Context().Value(storeKey{}).(*store.Store)
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +307,7 @@ func errorCode(err error) string {
 // ---- sites ----
 
 func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
-	sites, err := s.Store.Sites(r.Context())
+	sites, err := s.store(r).Sites(r.Context())
 	if err != nil {
 		serverError(w, err)
 		return
@@ -300,7 +326,7 @@ func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addSite(w http.ResponseWriter, r *http.Request) {
-	if err := s.Store.AddSite(r.Context(), r.PostFormValue("domain")); err != nil {
+	if err := s.store(r).AddSite(r.Context(), r.PostFormValue("domain")); err != nil {
 		http.Redirect(w, r, "/sites?error="+errorCode(err), http.StatusSeeOther)
 		return
 	}
@@ -313,7 +339,7 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := s.Store.DeleteSite(r.Context(), id); err != nil {
+	if err := s.store(r).DeleteSite(r.Context(), id); err != nil {
 		serverError(w, err)
 		return
 	}

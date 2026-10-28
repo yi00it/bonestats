@@ -24,13 +24,17 @@ import (
 	"sync"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 const maxBody = 4 << 10
 
 type Collector struct {
+	// Store holds the sites, their events and the daily salt. A host that
+	// keeps one store per customer sets Sites and Salts instead.
 	Store       *store.Store
+	Sites       Sites
+	Salts       Salts
 	Geo         *Geo
 	Location    *time.Location
 	ProxyHeader string // header the reverse proxy puts the client IP in; "" = none
@@ -42,6 +46,40 @@ type Collector struct {
 	mu      sync.Mutex
 	saltDay string
 	salt    []byte
+}
+
+// Sites finds the store that holds a domain's site.
+type Sites interface {
+	// Site returns sql.ErrNoRows for a domain that isn't tracked.
+	Site(ctx context.Context, domain string) (*store.Store, store.Site, error)
+}
+
+// Salts keeps the daily salt for visitor hashes; *store.Store is one.
+type Salts interface {
+	DailySalt(ctx context.Context, day string) ([]byte, error)
+	PurgeSalts(ctx context.Context, keepDay string) error
+}
+
+// oneStore puts every site in the same store.
+type oneStore struct{ *store.Store }
+
+func (o oneStore) Site(ctx context.Context, domain string) (*store.Store, store.Site, error) {
+	site, err := o.SiteByDomain(ctx, domain)
+	return o.Store, site, err
+}
+
+func (c *Collector) sites() Sites {
+	if c.Sites != nil {
+		return c.Sites
+	}
+	return oneStore{c.Store}
+}
+
+func (c *Collector) salts() Salts {
+	if c.Salts != nil {
+		return c.Salts
+	}
+	return c.Store
 }
 
 // payload is what bs.js sends. Short keys keep beacons small.
@@ -116,7 +154,7 @@ var errDropped = errors.New("dropped")
 
 func (c *Collector) handle(ctx context.Context, r *http.Request, ip netip.Addr, ua string, p payload) error {
 	domain := store.NormalizeDomain(p.Domain)
-	site, err := c.Store.SiteByDomain(ctx, domain)
+	st, site, err := c.sites().Site(ctx, domain)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errDropped
 	} else if err != nil {
@@ -142,7 +180,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ip netip.Addr, 
 		if p.Engaged != nil && *p.Engaged >= 0 && *p.Engaged <= int64(store.SessionTimeout/time.Millisecond) {
 			engaged = p.Engaged
 		}
-		found, err := c.Store.RecordLeave(ctx, store.Leave{
+		found, err := st.RecordLeave(ctx, store.Leave{
 			SiteID: site.ID, Visitor: visitor, Time: now, Path: path, Scroll: scroll, Engaged: engaged,
 		})
 		if err != nil {
@@ -150,7 +188,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ip netip.Addr, 
 		}
 		// Vitals only count for a page load that was recorded as a visit.
 		if v := p.Vitals; v != nil && found {
-			return c.Store.RecordVitals(ctx, store.Vitals{
+			return st.RecordVitals(ctx, store.Vitals{
 				SiteID: site.ID, Time: now, Path: path, Device: device,
 				LCP: clamp(v.LCP, 0, 120000), CLS: clamp(v.CLS, 0, 100), INP: clamp(v.INP, 0, 120000),
 				FCP: clamp(v.FCP, 0, 120000), TTFB: clamp(v.TTFB, 0, 120000),
@@ -194,7 +232,7 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ip netip.Addr, 
 		Screen:         screenBucket(p.Width),
 	}
 	e.Visit.Channel = store.Channel(e.Visit.Referrer, e.Visit.UTMSource, e.Visit.UTMMedium)
-	return c.Store.RecordEvent(ctx, e)
+	return st.RecordEvent(ctx, e)
 }
 
 // cleanProps keeps at most 10 properties with simple names and short scalar
@@ -248,7 +286,7 @@ func (c *Collector) dailySalt(ctx context.Context, now time.Time) ([]byte, error
 	if c.saltDay == day {
 		return c.salt, nil
 	}
-	salt, err := c.Store.DailySalt(ctx, day)
+	salt, err := c.salts().DailySalt(ctx, day)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +304,7 @@ func (c *Collector) RotateSalt(ctx context.Context, now time.Time) error {
 		c.saltDay, c.salt = "", nil
 	}
 	c.mu.Unlock()
-	return c.Store.PurgeSalts(ctx, day)
+	return c.salts().PurgeSalts(ctx, day)
 }
 
 // ClientIP returns the visitor's IP. Behind a reverse proxy, proxyHeader
