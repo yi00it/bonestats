@@ -10,6 +10,13 @@
   One Go binary, one SQLite file, a 1.2 KB tracking script.
 </p>
 
+<p align="center">
+  <a href="https://github.com/yi00it/bonestats/releases/latest"><img src="https://img.shields.io/github/v/release/yi00it/bonestats?sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/yi00it/bonestats/actions/workflows/ci.yml"><img src="https://github.com/yi00it/bonestats/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/yi00it/bonestats" alt="License: AGPL-3.0"></a>
+  <a href="https://github.com/yi00it/bonestats/pkgs/container/bonestats"><img src="https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
+</p>
+
 ![The bonestats dashboard in light mode](docs/dashboard.png)
 
 bonestats runs as a single Go binary with one SQLite file. Its tracking script is about 1.2 KB gzipped, smaller than Plausible's, and also measures Core Web Vitals, scroll depth and time on page. The dashboard looks like an instrument panel: dot-matrix display type, LED-style meters and a single signal-red accent, in a light and a dark theme.
