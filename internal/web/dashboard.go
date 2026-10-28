@@ -632,9 +632,9 @@ func vitalPos(key string, v float64) float64 {
 	case v <= m.Good:
 		return v / m.Good * 100 / 3
 	case v <= m.Poor:
-		return 100/3 + (v-m.Good)/(m.Poor-m.Good)*100/3
+		return 100.0/3 + (v-m.Good)/(m.Poor-m.Good)*100/3
 	default:
-		return 200/3 + math.Min(1, (v-m.Poor)/m.Poor)*100/3
+		return 200.0/3 + math.Min(1, (v-m.Poor)/m.Poor)*100/3
 	}
 }
 
