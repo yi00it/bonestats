@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	"bonestats/internal/collect"
-	"bonestats/internal/demo"
-	"bonestats/internal/store"
-	"bonestats/internal/web"
+	"github.com/yi00it/bonestats/collect"
+	"github.com/yi00it/bonestats/demo"
+	"github.com/yi00it/bonestats/store"
+	"github.com/yi00it/bonestats/web"
 )
 
 func env(key, def string) string {

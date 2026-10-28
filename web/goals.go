@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 // siteFromPath loads the site named by the {id} path segment.

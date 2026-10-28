@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"bonestats/internal/collect"
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/collect"
+	"github.com/yi00it/bonestats/store"
 )
 
 //go:embed templates/*.html

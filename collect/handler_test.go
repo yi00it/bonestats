@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 // A beacon whose connection is already gone (the page was closing) must

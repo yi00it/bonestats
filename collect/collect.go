@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 const maxBody = 4 << 10

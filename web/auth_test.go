@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 func testServer(t *testing.T) (*Server, http.Handler) {

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 // ---- links that keep the dashboard state ----

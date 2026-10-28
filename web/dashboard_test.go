@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"bonestats/internal/store"
+	"github.com/yi00it/bonestats/store"
 )
 
 func TestWindow(t *testing.T) {
