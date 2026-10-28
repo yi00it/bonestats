@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
 # The DB-IP Lite country database (CC BY 4.0, the dashboard shows the
 # attribution), so locations work out of the box. A new month's file can be
 # missing for the first hours of the month, so fall back to the previous one.
-FROM --platform=$BUILDPLATFORM alpine:3.22 AS geoip
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS geoip
 RUN apk add --no-cache curl
 RUN set -eu; \
     y=$(date +%Y); m=$(date +%m); m=${m#0}; \
