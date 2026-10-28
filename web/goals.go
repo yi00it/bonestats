@@ -14,7 +14,7 @@ import (
 func (s *Server) siteFromPath(w http.ResponseWriter, r *http.Request) (store.Site, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err == nil {
-		sites, err := s.Store.Sites(r.Context())
+		sites, err := s.store(r).Sites(r.Context())
 		if err != nil {
 			serverError(w, err)
 			return store.Site{}, false
@@ -45,12 +45,12 @@ func (s *Server) goalsPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	goals, err := s.Store.Goals(r.Context(), site.ID)
+	goals, err := s.store(r).Goals(r.Context(), site.ID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	funnels, err := s.Store.Funnels(r.Context(), site.ID)
+	funnels, err := s.store(r).Funnels(r.Context(), site.ID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -102,7 +102,7 @@ func (s *Server) addGoal(w http.ResponseWriter, r *http.Request) {
 		g.EventName = r.PostFormValue("event")
 		g.Currency = r.PostFormValue("currency")
 	}
-	http.Redirect(w, r, goalsURL(site, s.Store.AddGoal(r.Context(), g)), http.StatusSeeOther)
+	http.Redirect(w, r, goalsURL(site, s.store(r).AddGoal(r.Context(), g)), http.StatusSeeOther)
 }
 
 func (s *Server) deleteGoal(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func (s *Server) deleteGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := strconv.ParseInt(r.PathValue("gid"), 10, 64)
-	if err := s.Store.DeleteGoal(r.Context(), site.ID, id); err != nil {
+	if err := s.store(r).DeleteGoal(r.Context(), site.ID, id); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -130,7 +130,7 @@ func (s *Server) addFunnel(w http.ResponseWriter, r *http.Request) {
 			f.Steps = append(f.Steps, id)
 		}
 	}
-	http.Redirect(w, r, goalsURL(site, s.Store.AddFunnel(r.Context(), f)), http.StatusSeeOther)
+	http.Redirect(w, r, goalsURL(site, s.store(r).AddFunnel(r.Context(), f)), http.StatusSeeOther)
 }
 
 func (s *Server) deleteFunnel(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,7 @@ func (s *Server) deleteFunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := strconv.ParseInt(r.PathValue("fid"), 10, 64)
-	if err := s.Store.DeleteFunnel(r.Context(), site.ID, id); err != nil {
+	if err := s.store(r).DeleteFunnel(r.Context(), site.ID, id); err != nil {
 		serverError(w, err)
 		return
 	}

@@ -4,6 +4,7 @@ package collect
 
 import (
 	"context"
+	"database/sql"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -89,5 +90,59 @@ func TestFloodAndOrphanVitals(t *testing.T) {
 	}
 	if n := vitals["lcp"].Samples; n != 0 {
 		t.Errorf("stored %d vitals without a visit", n)
+	}
+}
+
+// tenants routes each domain to its own store, as a multi-tenant host would.
+type tenants map[string]*store.Store
+
+func (t tenants) Site(ctx context.Context, domain string) (*store.Store, store.Site, error) {
+	st, ok := t[domain]
+	if !ok {
+		return nil, store.Site{}, sql.ErrNoRows
+	}
+	site, err := st.SiteByDomain(ctx, domain)
+	return st, site, err
+}
+
+func TestBeaconsGoToTheSitesStore(t *testing.T) {
+	ctx := context.Background()
+	open := func(name string) *store.Store {
+		st, err := store.Open(filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		return st
+	}
+	a, b, salts := open("a.db"), open("b.db"), open("salts.db")
+	a.AddSite(ctx, "a.example")
+	b.AddSite(ctx, "b.example")
+	geo, _ := OpenGeo("")
+	c := &Collector{Sites: tenants{"a.example": a, "b.example": b}, Salts: salts, Geo: geo, Location: time.UTC}
+
+	beacon(c, `{"d":"a.example","n":"pageview","p":"/a"}`)
+	beacon(c, `{"d":"b.example","n":"pageview","p":"/b1"}`)
+	beacon(c, `{"d":"b.example","n":"pageview","p":"/b2"}`)
+	beacon(c, `{"d":"unknown.example","n":"pageview","p":"/"}`)
+
+	now := time.Now()
+	for _, tc := range []struct {
+		st     *store.Store
+		domain string
+		want   int64
+	}{{a, "a.example", 1}, {b, "b.example", 2}} {
+		site, _ := tc.st.SiteByDomain(ctx, tc.domain)
+		sum, err := tc.st.Summary(ctx, store.Query{SiteID: site.ID, From: now.Add(-time.Hour), To: now.Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sum.Pageviews != tc.want {
+			t.Errorf("%s: %d pageviews, want %d", tc.domain, sum.Pageviews, tc.want)
+		}
+	}
+	// Store is nil, so hashing and rotation can only have used Salts.
+	if err := c.RotateSalt(ctx, now); err != nil {
+		t.Fatal(err)
 	}
 }
