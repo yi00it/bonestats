@@ -3,8 +3,8 @@ module github.com/yi00it/bonestats
 go 1.27.3
 
 require (
-	github.com/oschwald/maxminddb-golang/v2 v2.8.0
-	modernc.org/sqlite v1.61.0
+	github.com/oschwald/maxminddb-golang/v2 v2.9.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
