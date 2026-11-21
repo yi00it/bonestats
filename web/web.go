@@ -61,6 +61,10 @@ type Server struct {
 	Collector   http.Handler
 	SourceURL   string // linked in the footer, as the AGPL asks of network services
 
+	// IgnorePrivacySignals counts visitors who send Global Privacy Control
+	// or Do Not Track, instead of skipping them.
+	IgnorePrivacySignals bool
+
 	// Authenticate, when set, replaces the built-in password login, for hosts
 	// with their own accounts and one store per customer. It returns the
 	// store of the user r is logged in as, or false. The host then serves
@@ -99,7 +103,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/event", s.Collector)
-	mux.Handle("GET /{script}", trackerHandler(static)) // bs.js and bs.<addons>.js
+	mux.Handle("GET /{script}", trackerHandler(static, s.IgnorePrivacySignals)) // bs.js and bs.<addons>.js
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheFor(24*time.Hour, files)))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
@@ -324,11 +328,12 @@ func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
 		scheme = "https"
 	}
 	s.render(w, "sites", map[string]any{
-		"Title":     "Sites",
-		"Sites":     sites,
-		"BaseURL":   scheme + "://" + r.Host,
-		"Error":     errorMessages[r.URL.Query().Get("error")],
-		"Retention": s.Retention,
+		"Title":                "Sites",
+		"Sites":                sites,
+		"BaseURL":              scheme + "://" + r.Host,
+		"Error":                errorMessages[r.URL.Query().Get("error")],
+		"Retention":            s.Retention,
+		"IgnorePrivacySignals": s.IgnorePrivacySignals,
 	})
 }
 

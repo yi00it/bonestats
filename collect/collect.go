@@ -40,6 +40,10 @@ type Collector struct {
 	ProxyHeader string // header the reverse proxy puts the client IP in; "" = none
 	RateLimit   int    // beacons per minute per client; 0 = unlimited
 
+	// IgnorePrivacySignals counts visitors who send Global Privacy Control
+	// or Do Not Track, instead of dropping their events.
+	IgnorePrivacySignals bool
+
 	limitOnce sync.Once
 	limiter   *rateLimiter
 
@@ -124,7 +128,7 @@ func (c *Collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer w.WriteHeader(http.StatusAccepted)
 
 	// Honor the visitor's privacy signals, even if the script was modified.
-	if r.Header.Get("Sec-GPC") == "1" || r.Header.Get("DNT") == "1" {
+	if !c.IgnorePrivacySignals && (r.Header.Get("Sec-GPC") == "1" || r.Header.Get("DNT") == "1") {
 		return
 	}
 	ua := r.UserAgent()

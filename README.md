@@ -87,6 +87,8 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 
 ![Funnel and web performance](docs/funnel-vitals.png)
 
+To leave out your own visits, open the browser console on your site and run `localStorage.bonestats_ignore = "true"`, once per browser and device (`localStorage.removeItem("bonestats_ignore")` undoes it). The script only reads this flag and never writes anything to visitors' devices.
+
 Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other sites, `bs.downloads.js` tracks file downloads, and `bs.downloads.outbound.js` does both.
 
 ## Demo data
@@ -108,6 +110,7 @@ Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other 
 | `BONESTATS_TRUST_PROXY` / `-trust-proxy` | `false` | Deprecated, same as `BONESTATS_PROXY_HEADER=X-Forwarded-For`. |
 | `BONESTATS_ALLOW_HTTP` / `-allow-http` | `false` | Allow logging in over plain HTTP from hosts other than `localhost`. Only for a trusted private network: the password and login cookie are sent unencrypted. |
 | `BONESTATS_EVENT_RATE` / `-event-rate` | `120` | Beacons per minute accepted from one IP (IPv6: one /64), with bursts of the same size. More are dropped, so one client can't flood the database. `0` = unlimited. |
+| `BONESTATS_IGNORE_PRIVACY_SIGNALS` / `-ignore-privacy-signals` | `false` | Count visitors who send Global Privacy Control or Do Not Track like everyone else. By default they are skipped. See [Privacy design](#privacy-design). |
 | `BONESTATS_SOURCE_URL` / `-source-url` | `https://github.com/yi00it/bonestats` | Linked as "Source code" in the dashboard footer. If you run a modified version, point it at your source: the AGPL asks you to offer it to your users. |
 
 ## Production deployment
@@ -149,7 +152,7 @@ Per page load: Core Web Vitals (LCP, INP, CLS, FCP, TTFB). Visit duration and bo
 - **No cookies or storage** on visitors' devices, and no fingerprinting.
 - **IP addresses are never stored.** They are used in memory for the country lookup (done locally, nothing leaves the server) and for the visitor hash.
 - Visitor hash = `sha256(daily_salt + domain + IP + User-Agent)`. The salt is random and **deleted within minutes after midnight** (in `BONESTATS_TZ`), overwritten on disk, so hashes can't be reversed or linked across days. As a result, someone who returns on another day counts as a new visitor. While a day's salt exists, someone holding the database could try to brute-force that day's hashes back to IP addresses, which is why the file is private.
-- **Global Privacy Control and Do Not Track are honored** in the script and again on the server.
+- **Global Privacy Control and Do Not Track are honored** in the script and again on the server, unless you set `BONESTATS_IGNORE_PRIVACY_SIGNALS=true`. Since nothing is stored on the device, no IP or lasting ID is kept and no data is sold or shared, you may decide that anonymous counting doesn't need these signals; Plausible and Fathom don't skip such visitors either. If you do, say so in your privacy policy.
 - Bots and automated browsers are filtered out.
 - Old data is deleted automatically (see retention).
 
@@ -161,7 +164,7 @@ The DB-IP Lite data is licensed CC BY 4.0. The dashboard shows the required attr
 
 `web/static/bs.js` is hand-minified to keep it tiny (about 1.9 KB raw, 1.2 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
 
-1. Stops immediately (and makes `bonestats()` do nothing) if the visitor sends GPC or DNT, or if it's an automated browser.
+1. Stops immediately (and makes `bonestats()` do nothing) if the visitor sends GPC or DNT (unless the server ignores them), if it's an automated browser, or if `localStorage.bonestats_ignore` is `"true"`.
 2. Sends a `pageview` beacon on load and on SPA navigations (`history.pushState`, `popstate`). The external referrer is only sent with the first one.
 3. `bonestats(name, props, revenue)` sends a custom event, and calls queued before the script loaded are replayed.
 4. It tracks the deepest scroll position and the time the page was visible.
