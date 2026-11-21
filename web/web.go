@@ -462,6 +462,10 @@ func securityHeaders(h http.Handler) http.Handler {
 		hd := w.Header()
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("Referrer-Policy", "same-origin")
+		// Nothing on a stats server belongs in search results, and the
+		// header covers what a <meta> tag can't: redirects, the script,
+		// errors and the API.
+		hd.Set("X-Robots-Tag", "noindex, nofollow")
 		if r.URL.Path != "/api/event" && !strings.HasPrefix(r.URL.Path, "/bs.") {
 			hd.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'")
 			hd.Set("X-Frame-Options", "DENY")

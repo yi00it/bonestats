@@ -239,3 +239,18 @@ func TestStaticVersions(t *testing.T) {
 		t.Fatalf("GET %s: status %d", link, w.Code)
 	}
 }
+
+// Every response, not only HTML pages, tells search engines to stay out.
+func TestNoIndexEverywhere(t *testing.T) {
+	_, h := testServer(t)
+	for _, req := range []struct{ method, path string }{
+		{"GET", "/"}, {"GET", "/login"}, {"GET", "/bs.js"}, {"GET", "/healthz"},
+		{"GET", "/static/app.css"}, {"GET", "/robots.txt"}, {"POST", "/api/event"},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(req.method, req.path, nil))
+		if got := w.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+			t.Errorf("%s %s (%d): X-Robots-Tag = %q", req.method, req.path, w.Code, got)
+		}
+	}
+}

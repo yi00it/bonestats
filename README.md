@@ -138,7 +138,7 @@ location / {
 
 Then start bonestats with `BONESTATS_PROXY_HEADER=X-Forwarded-For` (Caddy) or `BONESTATS_PROXY_HEADER=X-Real-IP` (nginx above), and `BONESTATS_ADDR=127.0.0.1:8080` so it can't be reached around the proxy. Name only a header your proxy always overwrites: any other header comes straight from the client and can be forged. With a chain of proxies, e.g. a CDN in front of nginx, make the last one set the real client IP.
 
-The admin login only works over HTTPS (or on `localhost`), and the cookie is then `__Host-` prefixed and `Secure`. The database file is created readable by its owner only; keep it that way and keep backups private too, as it holds the current day's salt.
+The admin login only works over HTTPS (or on `localhost`), and the cookie is then `__Host-` prefixed and `Secure`. Every response carries `X-Robots-Tag: noindex, nofollow`, so search engines keep your stats domain out of their results. Don't also add a `Disallow: /` robots.txt: crawlers would then never see the header. The database file is created readable by its owner only; keep it that way and keep backups private too, as it holds the current day's salt.
 
 ## What is collected
 
