@@ -18,6 +18,10 @@ import (
 // e.g. /bs.outbound.downloads.js. They only use the public bonestats() API.
 var addons = []string{"downloads", "outbound"}
 
+// privacySignals is the check in bs.js that stops the script for visitors
+// who send Global Privacy Control or Do Not Track.
+const privacySignals = "n.globalPrivacyControl||n.doNotTrack==1||w.doNotTrack==1||"
+
 type script struct {
 	plain, gz []byte
 	etag      string
@@ -25,11 +29,18 @@ type script struct {
 
 // trackerHandler serves bs.js and every add-on combination, each built and
 // gzipped once at startup so visitors get the small version even without a
-// compressing reverse proxy.
-func trackerHandler(static fs.FS) http.Handler {
+// compressing reverse proxy. With ignoreSignals, the script also runs for
+// visitors who send Global Privacy Control or Do Not Track.
+func trackerHandler(static fs.FS, ignoreSignals bool) http.Handler {
 	core, err := fs.ReadFile(static, "bs.js")
 	if err != nil {
 		panic(err)
+	}
+	if ignoreSignals {
+		if !bytes.Contains(core, []byte(privacySignals)) {
+			panic("bs.js: privacy signal check not found")
+		}
+		core = bytes.Replace(core, []byte(privacySignals), nil, 1)
 	}
 	scripts := map[string]script{}
 	for mask := 0; mask < 1<<len(addons); mask++ {

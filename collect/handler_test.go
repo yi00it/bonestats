@@ -146,3 +146,41 @@ func TestBeaconsGoToTheSitesStore(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Visitors who send Global Privacy Control or Do Not Track are dropped,
+// unless the collector is told to ignore those signals.
+func TestPrivacySignals(t *testing.T) {
+	for _, ignore := range []bool{false, true} {
+		ctx := context.Background()
+		st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.AddSite(ctx, "example.com")
+		site, _ := st.SiteByDomain(ctx, "example.com")
+		geo, _ := OpenGeo("")
+		c := &Collector{Store: st, Geo: geo, Location: time.UTC, IgnorePrivacySignals: ignore}
+
+		for _, h := range []string{"Sec-GPC", "DNT"} {
+			r := httptest.NewRequest("POST", "/api/event", strings.NewReader(`{"d":"example.com","n":"pageview","p":"/","w":1200}`))
+			r.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/131.0")
+			r.Header.Set(h, "1")
+			r.RemoteAddr = "203.0.113.9:5000"
+			c.ServeHTTP(httptest.NewRecorder(), r)
+		}
+
+		now := time.Now()
+		sum, err := st.Summary(ctx, store.Query{SiteID: site.ID, From: now.Add(-time.Hour), To: now.Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := int64(0)
+		if ignore {
+			want = 2
+		}
+		if sum.Pageviews != want {
+			t.Errorf("ignore=%v: pageviews = %d, want %d", ignore, sum.Pageviews, want)
+		}
+		st.Close()
+	}
+}

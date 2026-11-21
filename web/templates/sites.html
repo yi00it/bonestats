@@ -59,7 +59,8 @@ bonestats("purchase", {plan: "pro"}, 29.90)  // revenue in the goal's currency</
     <ul>
       <li>No cookies, localStorage or fingerprinting on visitors' devices.</li>
       <li>IP addresses are never stored. Visitors are counted with a hash whose salt is deleted every day.</li>
-      <li>Visitors who send Global Privacy Control or Do Not Track are not counted.</li>
+      {{if .IgnorePrivacySignals}}<li>Visitors who send Global Privacy Control or Do Not Track are counted like everyone else (<code>BONESTATS_IGNORE_PRIVACY_SIGNALS</code>).</li>{{else}}<li>Visitors who send Global Privacy Control or Do Not Track are not counted.</li>{{end}}
+      <li>To leave out your own visits, run <code>localStorage.bonestats_ignore = "true"</code> in the browser console on your site, once per browser.</li>
       <li>Data older than {{.Retention}} days is deleted automatically.</li>
     </ul>
   </section>

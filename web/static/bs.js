@@ -1,5 +1,6 @@
 !function(w,d,n,l){var s=d.currentScript,q=w.bonestats?.q||[],P=w.PerformanceObserver,M=Math.round,Z=Date.now,v={},o,p,y=0,E=0,j,r=d.referrer,D,A
-if(n.globalPrivacyControl||n.doNotTrack==1||w.doNotTrack==1||n.webdriver||!s)return w.bonestats=()=>{}
+try{var K=localStorage.bonestats_ignore=="true"}catch(e){}
+if(n.globalPrivacyControl||n.doNotTrack==1||w.doNotTrack==1||n.webdriver||K||!s)return w.bonestats=()=>{}
 D=s.dataset.domain||l.hostname
 A=s.dataset.api||new URL(s.src).origin+"/api/event"
 j=d.hidden?0:Z()

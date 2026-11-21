@@ -47,17 +47,18 @@ func main() {
 	}
 	trustProxyDefault := boolEnv("BONESTATS_TRUST_PROXY")
 	var (
-		addr         = flag.String("addr", env("BONESTATS_ADDR", ":8080"), "listen address")
-		dbPath       = flag.String("db", env("BONESTATS_DB", "bonestats.db"), "SQLite database file")
-		geoPath      = flag.String("geoip", env("BONESTATS_GEOIP", ""), "optional DB-IP/MaxMind country .mmdb file")
-		retention    = flag.Int("retention", retentionDefault, "delete data older than this many days (0 = keep forever)")
-		tz           = flag.String("tz", env("BONESTATS_TZ", "Local"), "timezone for days in the dashboard, e.g. Europe/Berlin")
-		proxyHeader  = flag.String("proxy-header", env("BONESTATS_PROXY_HEADER", ""), "header your reverse proxy sets to the client IP, e.g. X-Forwarded-For or X-Real-IP")
-		trustProxy   = flag.Bool("trust-proxy", trustProxyDefault, "deprecated: same as -proxy-header X-Forwarded-For")
-		allowHTTP    = flag.Bool("allow-http", boolEnv("BONESTATS_ALLOW_HTTP"), "allow logging in over plain HTTP from hosts other than localhost")
-		eventRate    = flag.Int("event-rate", eventRateDefault, "beacons per minute accepted from one IP (0 = unlimited)")
-		passwordFile = flag.String("password-file", env("BONESTATS_PASSWORD_FILE", ""), "file holding the admin password, instead of BONESTATS_PASSWORD")
-		sourceURL    = flag.String("source-url", env("BONESTATS_SOURCE_URL", "https://github.com/yi00it/bonestats"), "where users can get the source code of this version (AGPL-3.0)")
+		addr          = flag.String("addr", env("BONESTATS_ADDR", ":8080"), "listen address")
+		dbPath        = flag.String("db", env("BONESTATS_DB", "bonestats.db"), "SQLite database file")
+		geoPath       = flag.String("geoip", env("BONESTATS_GEOIP", ""), "optional DB-IP/MaxMind country .mmdb file")
+		retention     = flag.Int("retention", retentionDefault, "delete data older than this many days (0 = keep forever)")
+		tz            = flag.String("tz", env("BONESTATS_TZ", "Local"), "timezone for days in the dashboard, e.g. Europe/Berlin")
+		proxyHeader   = flag.String("proxy-header", env("BONESTATS_PROXY_HEADER", ""), "header your reverse proxy sets to the client IP, e.g. X-Forwarded-For or X-Real-IP")
+		trustProxy    = flag.Bool("trust-proxy", trustProxyDefault, "deprecated: same as -proxy-header X-Forwarded-For")
+		allowHTTP     = flag.Bool("allow-http", boolEnv("BONESTATS_ALLOW_HTTP"), "allow logging in over plain HTTP from hosts other than localhost")
+		eventRate     = flag.Int("event-rate", eventRateDefault, "beacons per minute accepted from one IP (0 = unlimited)")
+		passwordFile  = flag.String("password-file", env("BONESTATS_PASSWORD_FILE", ""), "file holding the admin password, instead of BONESTATS_PASSWORD")
+		ignoreSignals = flag.Bool("ignore-privacy-signals", boolEnv("BONESTATS_IGNORE_PRIVACY_SIGNALS"), "count visitors who send Global Privacy Control or Do Not Track")
+		sourceURL     = flag.String("source-url", env("BONESTATS_SOURCE_URL", "https://github.com/yi00it/bonestats"), "where users can get the source code of this version (AGPL-3.0)")
 	)
 	flag.Parse()
 	if *retention < 0 {
@@ -107,7 +108,7 @@ func main() {
 		log.Print("admin password changed: logged out all sessions")
 	}
 
-	collector := &collect.Collector{Store: st, Geo: geo, Location: loc, ProxyHeader: *proxyHeader, RateLimit: *eventRate}
+	collector := &collect.Collector{Store: st, Geo: geo, Location: loc, ProxyHeader: *proxyHeader, RateLimit: *eventRate, IgnorePrivacySignals: *ignoreSignals}
 	srv := &web.Server{
 		Store:       st,
 		Password:    password,
@@ -118,6 +119,8 @@ func main() {
 		GeoEnabled:  geo.Enabled(),
 		Collector:   collector,
 		SourceURL:   *sourceURL,
+
+		IgnorePrivacySignals: *ignoreSignals,
 	}
 	httpServer := &http.Server{
 		Addr:              *addr,
