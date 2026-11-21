@@ -1,6 +1,6 @@
 module github.com/yi00it/bonestats
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/oschwald/maxminddb-golang/v2 v2.8.0
