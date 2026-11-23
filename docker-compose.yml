@@ -12,6 +12,8 @@ services:
       BONESTATS_PASSWORD: ${BONESTATS_PASSWORD:?set BONESTATS_PASSWORD in .env (at least 12 characters)}
       BONESTATS_TZ: ${BONESTATS_TZ:-UTC}
       BONESTATS_RETENTION_DAYS: ${BONESTATS_RETENTION_DAYS:-365}
+      BONESTATS_SMTP_URL: ${BONESTATS_SMTP_URL:-}
+      BONESTATS_SMTP_FROM: ${BONESTATS_SMTP_FROM:-}
       # Caddy overwrites X-Forwarded-For with the real client IP.
       BONESTATS_PROXY_HEADER: X-Forwarded-For
     volumes:

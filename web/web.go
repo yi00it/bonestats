@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/yi00it/bonestats/collect"
+	"github.com/yi00it/bonestats/report"
 	"github.com/yi00it/bonestats/store"
 )
 
@@ -85,6 +86,11 @@ type Server struct {
 	// system's temporary directory.
 	ImportDir string
 
+	// Mailer sends email reports; nil turns them off. MailFrom is its From
+	// address, shown on the Reports page.
+	Mailer   report.Mailer
+	MailFrom string
+
 	// Links are extra entries for the header navigation, such as the
 	// host's account page.
 	Links []Link
@@ -109,7 +115,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	s.tmpl = map[string]*template.Template{}
-	for _, page := range []string{"dashboard", "sites", "goals", "imports", "shares", "login"} {
+	for _, page := range []string{"dashboard", "sites", "goals", "imports", "shares", "reports", "unsubscribe", "login"} {
 		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }, "links": func() []Link { return s.Links }}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
@@ -153,6 +159,14 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /sites/{id}/share", s.auth(s.sharesPage))
 		mux.Handle("POST /sites/{id}/shares", form(s.auth(s.addShare)))
 		mux.Handle("POST /sites/{id}/shares/{sid}/delete", form(s.auth(s.deleteShare)))
+	}
+	if s.reportsEnabled() {
+		mux.Handle("GET /sites/{id}/reports", s.auth(s.reportsPage))
+		mux.Handle("POST /sites/{id}/reports", form(s.auth(s.addReport)))
+		mux.Handle("POST /sites/{id}/reports/{rid}/delete", form(s.auth(s.deleteReport)))
+		mux.Handle("POST /sites/{id}/reports/{rid}/send", form(s.auth(s.sendReport)))
+		mux.HandleFunc("GET /reports/unsubscribe/{token}", s.unsubscribePage)
+		mux.Handle("POST /reports/unsubscribe/{token}", form(http.HandlerFunc(s.unsubscribe)))
 	}
 	mux.Handle("GET /sites/{id}/import", s.auth(s.importsPage))
 	mux.Handle("POST /sites/{id}/import", csrf.Handler(s.auth(s.uploadImport)))
@@ -264,8 +278,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// The password would cross the network in plain text.
 	if !https(r) && !localHost(r) && !s.AllowHTTP {
-		w.WriteHeader(http.StatusForbidden)
-		s.render(w, "login", map[string]any{"Title": "Log in",
+		s.renderStatus(w, http.StatusForbidden, "login", map[string]any{"Title": "Log in",
 			"Error": "Log in over HTTPS. To allow plain HTTP on a trusted network, set BONESTATS_ALLOW_HTTP=true."})
 		return
 	}
@@ -276,15 +289,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := collect.ClientIP(r, s.ProxyHeader)
 	if !s.limiter.attempt(ip) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, "login", map[string]any{"Title": "Log in", "Error": "Too many failed attempts. Try again in a few minutes."})
+		s.renderStatus(w, http.StatusTooManyRequests, "login", map[string]any{"Title": "Log in", "Error": "Too many failed attempts. Try again in a few minutes."})
 		return
 	}
 	pw := r.PostFormValue("password")
 	if subtle.ConstantTimeCompare([]byte(pw), []byte(s.Password)) != 1 {
 		time.Sleep(failDelay) // slow down guessing
-		w.WriteHeader(http.StatusUnauthorized)
-		s.render(w, "login", map[string]any{"Title": "Log in", "Error": "Wrong password."})
+		s.renderStatus(w, http.StatusUnauthorized, "login", map[string]any{"Title": "Log in", "Error": "Wrong password."})
 		return
 	}
 	s.limiter.success(ip)
@@ -329,6 +340,8 @@ var errorMessages = map[string]string{
 	"api-key-name":   "An API key needs a name of at most 100 characters.",
 	"share-name":     "A shared link needs a name of at most 100 characters.",
 	"share-password": "A shared link's password needs 8 to 200 characters.",
+	"report-email":   "Enter one email address, like name@example.com.",
+	"report-period":  "Choose weekly or monthly.",
 	"failed":         "That didn't work. The server log has the details.",
 }
 
@@ -339,6 +352,7 @@ func errorCode(err error) string {
 		"goal-path": store.ErrGoalPath, "currency": store.ErrCurrency,
 		"funnel-name": store.ErrFunnelName, "funnel-steps": store.ErrFunnelSteps,
 		"api-key-name": store.ErrAPIKeyName, "share-name": store.ErrShareName,
+		"report-email": store.ErrReportEmail, "report-period": store.ErrReportPeriod,
 	} {
 		if errors.Is(err, e) {
 			return code
@@ -390,6 +404,7 @@ func (s *Server) renderSites(w http.ResponseWriter, r *http.Request, newKey stri
 		"IgnorePrivacySignals": s.IgnorePrivacySignals,
 		"APIEnabled":           s.apiEnabled(),
 		"SharesEnabled":        s.sharesEnabled(),
+		"ReportsEnabled":       s.reportsEnabled(),
 		"APIKeys":              keys,
 		"NewKey":               newKey,
 	})
@@ -499,8 +514,14 @@ func formatDur(d time.Duration) string {
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data map[string]any) {
+	s.renderStatus(w, http.StatusOK, page, data)
+}
+
+// renderStatus renders a page with a status other than 200.
+func (s *Server) renderStatus(w http.ResponseWriter, status int, page string, data map[string]any) {
 	data["Year"] = time.Now().Year()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if err := s.tmpl[page].ExecuteTemplate(w, "layout", data); err != nil {
 		log.Printf("render %s: %v", page, err)
 	}

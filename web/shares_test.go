@@ -277,3 +277,16 @@ func TestSharePasswordLimit(t *testing.T) {
 		t.Errorf("admin login blocked by share guesses: %d", w.Code)
 	}
 }
+
+// Pages with an error status are still HTML (browsers don't sniff: nosniff).
+func TestErrorPagesAreHTML(t *testing.T) {
+	sharePasswordIter = 1000
+	s, h := testServer(t)
+	site := addSite(t, s, "shared.example")
+	sh, _ := s.Store.AddShare(context.Background(), site.ID, "x")
+	hash, _ := hashSharePassword("open sesame")
+	s.Store.SetSharePassword(context.Background(), site.ID, sh.ID, hash)
+	if w := anonGet(h, "/share/"+sh.Token); w.Code != http.StatusUnauthorized || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("password page: %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+}

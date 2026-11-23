@@ -513,4 +513,7 @@ ul { padding-left: 20px; } li { margin: 4px 0; }
 .share-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .share-head small { color: var(--muted); }
 .share-head form { margin: 0 0 0 auto; }
+.share-head form + form { margin-left: 0; }
 .share pre { white-space: pre-wrap; word-break: break-all; }
+.login .message { text-align: center; color: var(--ink-2); line-height: 1.5; margin: 0 0 8px; }
+.key-form select { flex: 0 0 auto; }

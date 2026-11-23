@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<title>{{.Subject}}</title>
+</head>
+<body style="margin:0;padding:0;background:#e6e6e1;color:#121211;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;">{{if .Empty}}No visits in this period.{{else}}{{range $i, $m := .Metrics}}{{if lt $i 3}}{{$m.Value}} {{$m.Name}}{{with $m.Change}} ({{.}}){{end}} · {{end}}{{end}}{{end}}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#e6e6e1;">
+<tr><td align="center" style="padding:28px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;">
+
+<tr><td style="padding:0 4px 18px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td style="font:700 20px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:-.02em;color:#121211;">bonestats<span style="color:#f0301f;">.</span></td>
+    <td align="right" style="font:500 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;color:#85857d;">{{.PeriodName}} report</td>
+  </tr></table>
+</td></tr>
+
+<tr><td style="background:#f4f4f0;border:1px solid #d3d3cc;border-radius:12px;padding:26px 24px 8px;">
+  <div style="font:700 26px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:-.02em;color:#121211;word-break:break-all;">{{.Domain}}</div>
+  <div style="font:500 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:#85857d;padding:6px 0 18px;">{{.Label}}</div>
+
+  {{if .Empty}}
+  <p style="font-size:15px;line-height:1.5;color:#3d3d3a;margin:0 0 22px;">No visits in this period. If that's unexpected, check that the tracking script is still on the site.</p>
+  {{else}}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #d3d3cc;">
+  {{range .Metrics}}
+    <tr>
+      <td style="padding:11px 0;border-bottom:1px solid #d3d3cc;font:500 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:#85857d;">{{.Name}}</td>
+      <td align="right" style="padding:11px 0;border-bottom:1px solid #d3d3cc;font:700 20px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#121211;white-space:nowrap;">{{.Value}}</td>
+      <td align="right" width="78" style="padding:11px 0 11px 10px;border-bottom:1px solid #d3d3cc;font:600 13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap;color:{{if .Flat}}#85857d{{else if .Good}}#0c9a5e{{else}}#c97a00{{end}};">{{.Change}}</td>
+    </tr>
+  {{end}}
+  </table>
+  {{with .Metrics}}{{if (index . 0).Change}}<p style="font-size:12px;color:#85857d;margin:8px 0 0;">Changes compared with {{$.PreviousLabel}}.</p>{{end}}{{end}}
+
+  {{template "list" (list "Top pages" "Pageviews" .Pages)}}
+  {{template "list" (list "Top sources" "Visitors" .Sources)}}
+  {{if .Countries}}{{template "list" (list "Top countries" "Visitors" .Countries)}}{{end}}
+  {{if .Goals}}{{template "list" (list "Goals" "Visitors · CR" .Goals)}}{{end}}
+  {{end}}
+
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 18px;"><tr>
+    <td style="background:#121211;border-radius:8px;"><a href="{{.DashboardURL}}" style="display:inline-block;padding:12px 20px;font:700 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:#f4f4f0;text-decoration:none;">Open the dashboard</a></td>
+  </tr></table>
+</td></tr>
+
+<tr><td style="padding:18px 8px;font-size:12px;line-height:1.6;color:#85857d;text-align:center;">
+  Sent by bonestats to {{.Email}}.<br>
+  <a href="{{.UnsubscribeURL}}" style="color:#85857d;">Unsubscribe</a> from these reports.
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+{{define "list"}}{{$title := index . 0}}{{$unit := index . 1}}{{$rows := index . 2}}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;">
+    <tr>
+      <td style="padding:0 0 8px;font:600 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;color:#121211;">{{$title}}</td>
+      <td align="right" style="padding:0 0 8px;font:500 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:#85857d;">{{$unit}}</td>
+    </tr>
+    {{range $rows}}
+    <tr>
+      <td style="padding:5px 12px 5px 0;font-size:14px;color:#121211;word-break:break-all;">
+        {{.Label}}
+        <div style="height:3px;background:#dcdcd5;border-radius:2px;margin-top:5px;"><div style="height:3px;width:{{.Bar}}%;background:#f0301f;border-radius:2px;"></div></div>
+      </td>
+      <td align="right" valign="top" width="112" style="padding:5px 0;font:600 14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#121211;white-space:nowrap;">{{.Value}}</td>
+    </tr>
+    {{end}}
+  </table>
+{{end}}

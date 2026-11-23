@@ -1,0 +1,25 @@
+{{.PeriodName}} report for {{.Domain}}
+{{.Label}}
+{{if .Empty}}
+No visits in this period.
+{{else}}
+{{range .Metrics}}{{printf "%-16s" .Name}} {{.Value}}{{with .Change}}  ({{.}} vs {{$.PreviousLabel}}){{end}}
+{{end}}
+Top pages (pageviews)
+{{range .Pages}}{{printf "%8s" .Value}}  {{.Label}}
+{{end}}
+Top sources (visitors)
+{{range .Sources}}{{printf "%8s" .Value}}  {{.Label}}
+{{end}}
+Top countries (visitors)
+{{range .Countries}}{{printf "%8s" .Value}}  {{.Label}}
+{{else}}  (no country data)
+{{end}}{{if .Goals}}
+Goals (visitors · conversion rate)
+{{range .Goals}}{{printf "%14s" .Value}}  {{.Label}}
+{{end}}{{end}}{{end}}
+Open the dashboard: {{.DashboardURL}}
+
+--
+Sent by bonestats to {{.Email}}.
+Unsubscribe: {{.UnsubscribeURL}}

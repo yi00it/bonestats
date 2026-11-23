@@ -86,6 +86,7 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 - **Export and API:** download the current view (range and filters included) as a ZIP of CSV files, or read the same numbers from scripts with the read-only [stats API](docs/API.md), using keys you create on the Sites page.
 - **Import:** bring your history from Plausible (its export ZIP) or Umami (its raw events), on the site's *Import* page or with `bonestats import`. See [docs/IMPORT.md](docs/IMPORT.md).
 - **Shared links:** give anyone a secret link to one site's dashboard (Sites → *Share*). They can pick any range and filter, without logging in and without seeing anything else. Give a link a password to ask for it first. Delete the link to turn it off.
+- **Email reports:** weekly or monthly emails with a site's visitors, top pages, sources, countries and goals, compared with the period before (Sites → *Reports*). Needs an SMTP server, see `BONESTATS_SMTP_URL`. Every email has an unsubscribe link.
 - **Light and dark:** follows your system setting, or pick one with the switch in the header (remembered in your browser).
 
 ![Funnel and web performance](docs/funnel-vitals.png)
@@ -114,6 +115,8 @@ Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other 
 | `BONESTATS_ALLOW_HTTP` / `-allow-http` | `false` | Allow logging in over plain HTTP from hosts other than `localhost`. Only for a trusted private network: the password and login cookie are sent unencrypted. |
 | `BONESTATS_EVENT_RATE` / `-event-rate` | `120` | Beacons per minute accepted from one IP (IPv6: one /64), with bursts of the same size. More are dropped, so one client can't flood the database. `0` = unlimited. |
 | `BONESTATS_IGNORE_PRIVACY_SIGNALS` / `-ignore-privacy-signals` | `false` | Count visitors who send Global Privacy Control or Do Not Track like everyone else. By default they are skipped. See [Privacy design](#privacy-design). |
+| `BONESTATS_SMTP_URL` / `-smtp-url` | (off) | SMTP server for email reports: `smtp://user:password@smtp.example.com:587` (STARTTLS) or `smtps://user:password@smtp.example.com:465` (TLS from the start). Percent-encode `@`, `:` and `/` in the user name or password. The password is only sent over TLS, or to localhost. |
+| `BONESTATS_SMTP_FROM` / `-smtp-from` | (off) | From address of email reports, e.g. `bonestats <stats@example.com>`. Your SMTP provider has to allow sending from it. |
 | `BONESTATS_SOURCE_URL` / `-source-url` | `https://github.com/yi00it/bonestats` | Linked as "Source code" in the dashboard footer. If you run a modified version, point it at your source: the AGPL asks you to offer it to your users. |
 
 ## Production deployment
@@ -181,10 +184,11 @@ Beacon fields: `d` domain, `n` name, `p` path, `w` viewport width, `t` touch poi
 ## Layout
 
 ```
-main.go                    config, startup, retention job
+main.go                    config, startup, retention and report jobs
 store                      SQLite schema and migrations, writes, filters, dashboard queries, channels
 collect                    /api/event: validation, hashing, UA parsing, GeoIP
 importer                   imports from Plausible and Umami
+report                     email reports: content, schedule, SMTP
 web                        dashboard, goals pages, login, templates, static files (bs.js + add-ons, jsvectormap, fonts)
 demo                       demo data generator
 docs                       README images

@@ -34,10 +34,11 @@ func (s *Server) renderImports(w http.ResponseWriter, r *http.Request, site stor
 		serverError(w, err)
 		return
 	}
+	status := http.StatusOK
 	if failure != "" {
-		w.WriteHeader(http.StatusBadRequest)
+		status = http.StatusBadRequest
 	}
-	s.render(w, "imports", map[string]any{
+	s.renderStatus(w, status, "imports", map[string]any{
 		"Title":     "Import · " + site.Domain,
 		"Site":      site,
 		"Imports":   ims,

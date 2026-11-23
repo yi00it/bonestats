@@ -29,7 +29,7 @@ const SessionTimeout = 30 * time.Minute
 // the browser reports any time on it; their visits are kept but never shown.
 const MinEngaged = time.Second
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 // Store uses two pools: db, the single writer, and rdb, read-only
 // connections for dashboard queries. With WAL, readers never block the
@@ -208,6 +208,24 @@ CREATE TABLE IF NOT EXISTS shares (
 	name       TEXT NOT NULL,
 	created_at INTEGER NOT NULL,
 	password   TEXT NOT NULL DEFAULT '' -- slow hash, see web; '' = no password
+);
+
+-- Email reports: one row per address and period of a site. last_period is
+-- the first day of the last period sent (YYYY-MM-DD), so each goes out once.
+-- token is the address's unsubscribe link. base_url is where the dashboard
+-- was opened when the address was added, for links in the email.
+CREATE TABLE IF NOT EXISTS reports (
+	id          INTEGER PRIMARY KEY,
+	site_id     INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	email       TEXT NOT NULL,
+	period      TEXT NOT NULL, -- weekly or monthly
+	token       TEXT NOT NULL UNIQUE,
+	base_url    TEXT NOT NULL,
+	created_at  INTEGER NOT NULL,
+	last_period TEXT NOT NULL DEFAULT '',
+	last_sent   INTEGER,
+	last_error  TEXT NOT NULL DEFAULT '',
+	UNIQUE(site_id, email, period)
 );
 
 -- Keys for the stats API: sha256 of the key, so a leaked database can't be
