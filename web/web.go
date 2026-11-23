@@ -71,6 +71,11 @@ type Server struct {
 	// /login and /logout itself.
 	Authenticate func(r *http.Request) (*store.Store, bool)
 
+	// AuthenticateAPI resolves an API key to its store, for hosts that set
+	// Authenticate. Without it, such hosts serve no API. With the built-in
+	// login, keys are looked up in Store.
+	AuthenticateAPI func(r *http.Request, key string) (*store.Store, bool)
+
 	// Links are extra entries for the header navigation, such as the
 	// host's account page.
 	Links []Link
@@ -130,6 +135,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /sites/{id}/goals/{gid}/delete", form(s.auth(s.deleteGoal)))
 	mux.Handle("POST /sites/{id}/funnels", form(s.auth(s.addFunnel)))
 	mux.Handle("POST /sites/{id}/funnels/{fid}/delete", form(s.auth(s.deleteFunnel)))
+	mux.Handle("GET /export", s.auth(s.export))
+	if s.apiEnabled() {
+		mux.Handle("POST /api-keys", form(s.auth(s.addAPIKey)))
+		mux.Handle("POST /api-keys/{id}/delete", form(s.auth(s.deleteAPIKey)))
+	}
+	s.apiRoutes(mux)
 	return s.checkProxy(securityHeaders(mux))
 }
 
@@ -294,6 +305,7 @@ var errorMessages = map[string]string{
 	"currency":     "Revenue needs a 3-letter currency code and an event goal.",
 	"funnel-name":  "A funnel needs a name of at most 100 characters.",
 	"funnel-steps": "A funnel needs 2 to 8 steps.",
+	"api-key-name": "An API key needs a name of at most 100 characters.",
 	"failed":       "That didn't work. The server log has the details.",
 }
 
@@ -303,6 +315,7 @@ func errorCode(err error) string {
 		"domain": store.ErrInvalidDomain, "goal-kind": store.ErrGoalKind, "event-name": store.ErrEventName,
 		"goal-path": store.ErrGoalPath, "currency": store.ErrCurrency,
 		"funnel-name": store.ErrFunnelName, "funnel-steps": store.ErrFunnelSteps,
+		"api-key-name": store.ErrAPIKeyName,
 	} {
 		if errors.Is(err, e) {
 			return code
@@ -318,14 +331,32 @@ func errorCode(err error) string {
 // ---- sites ----
 
 func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
-	sites, err := s.store(r).Sites(r.Context())
+	s.renderSites(w, r, "")
+}
+
+// renderSites shows the sites page. newKey is an API key that was just
+// created: the only time it can be shown.
+func (s *Server) renderSites(w http.ResponseWriter, r *http.Request, newKey string) {
+	ctx := r.Context()
+	st := s.store(r)
+	sites, err := st.Sites(ctx)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
+	var keys []store.APIKey
+	if s.apiEnabled() {
+		if keys, err = st.APIKeys(ctx); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	scheme := "http"
 	if https(r) {
 		scheme = "https"
+	}
+	if newKey != "" {
+		w.Header().Set("Cache-Control", "no-store")
 	}
 	s.render(w, "sites", map[string]any{
 		"Title":                "Sites",
@@ -334,7 +365,32 @@ func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
 		"Error":                errorMessages[r.URL.Query().Get("error")],
 		"Retention":            s.Retention,
 		"IgnorePrivacySignals": s.IgnorePrivacySignals,
+		"APIEnabled":           s.apiEnabled(),
+		"APIKeys":              keys,
+		"NewKey":               newKey,
 	})
+}
+
+func (s *Server) addAPIKey(w http.ResponseWriter, r *http.Request) {
+	key, err := s.store(r).AddAPIKey(r.Context(), r.PostFormValue("name"))
+	if err != nil {
+		http.Redirect(w, r, "/sites?error="+errorCode(err)+"#api", http.StatusSeeOther)
+		return
+	}
+	s.renderSites(w, r, key)
+}
+
+func (s *Server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store(r).DeleteAPIKey(r.Context(), id); err != nil {
+		serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/sites#api", http.StatusSeeOther)
 }
 
 func (s *Server) addSite(w http.ResponseWriter, r *http.Request) {
