@@ -9,20 +9,26 @@
 
   <section class="card">
     <h2>Shared links</h2>
-    <p>Anyone with a shared link can see this site's dashboard, with every date range and filter, without logging in. They can't see other sites or change anything. Delete a link to turn it off.</p>
+    <p>Anyone with a shared link can see this site's dashboard, with every date range and filter, without logging in. They can't see other sites or change anything. Give a link a password to ask for it first. Delete a link to turn it off.</p>
     {{range .Shares}}
     <div class="share">
       <div class="share-head">
-        <b>{{.Name}}</b> <small>created {{.CreatedAt.Format "Jan 2, 2006"}}</small>
+        <b>{{.Name}}</b> <small>created {{.CreatedAt.Format "Jan 2, 2006"}}{{if .Password}} · password protected{{end}}</small>
         <form method="post" action="/sites/{{$.Site.ID}}/shares/{{.ID}}/delete" data-confirm="Delete the shared link “{{.Name}}”? It stops working for everyone who has it.">
           <button class="danger">Delete</button>
         </form>
       </div>
       <pre><code>{{$.BaseURL}}/share/{{.Token}}</code></pre>
+      <form method="post" action="/sites/{{$.Site.ID}}/shares/{{.ID}}/password" class="key-form share-pass">
+        <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="200" aria-label="Password for {{.Name}}" placeholder="{{if .Password}}New password{{else}}Password (optional){{end}}">
+        <button type="submit">{{if .Password}}Change password{{else}}Set password{{end}}</button>
+        {{if .Password}}<button type="submit" name="remove" value="1" class="danger" formnovalidate>Remove password</button>{{end}}
+      </form>
     </div>
     {{else}}<p class="empty">No shared links yet.</p>{{end}}
     <form method="post" action="/sites/{{.Site.ID}}/shares" class="key-form">
       <input name="name" placeholder="Link name, e.g. Team or Public" aria-label="Link name" maxlength="100" required>
+      <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="200" placeholder="Password (optional)" aria-label="Password (optional)">
       <button type="submit">Create link</button>
     </form>
   </section>

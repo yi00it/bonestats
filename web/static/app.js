@@ -367,9 +367,11 @@ document.addEventListener("bs-theme", function () {
     if (busy || document.hidden || interacting()) return;
     busy = true;
     fetch(location.href, { cache: "no-store", credentials: "same-origin" }).then(function (res) {
-      // A redirect means the login expired or the site is gone: reload properly.
+      // A redirect means the login expired or the site is gone, and a shared
+      // link answers 401 once it needs a (new) password and 404 once it is
+      // deleted: reload properly.
       if (res.redirected || !res.ok) {
-        if (res.redirected) location.reload();
+        if (res.redirected || res.status === 401 || res.status === 404) location.reload();
         return;
       }
       return res.text().then(function (html) {

@@ -85,7 +85,7 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 - **Live:** the dashboard refreshes every 15 seconds while it's open and shows how many visitors are online. Numbers that changed flicker to their new value; open tabs and your scroll position are kept.
 - **Export and API:** download the current view (range and filters included) as a ZIP of CSV files, or read the same numbers from scripts with the read-only [stats API](docs/API.md), using keys you create on the Sites page.
 - **Import:** bring your history from Plausible (its export ZIP) or Umami (its raw events), on the site's *Import* page or with `bonestats import`. See [docs/IMPORT.md](docs/IMPORT.md).
-- **Shared links:** give anyone a secret link to one site's dashboard (Sites → *Share*). They can pick any range and filter, without logging in and without seeing anything else. Delete the link to turn it off.
+- **Shared links:** give anyone a secret link to one site's dashboard (Sites → *Share*). They can pick any range and filter, without logging in and without seeing anything else. Give a link a password to ask for it first. Delete the link to turn it off.
 - **Light and dark:** follows your system setting, or pick one with the switch in the header (remembered in your browser).
 
 ![Funnel and web performance](docs/funnel-vitals.png)

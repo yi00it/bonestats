@@ -23,6 +23,7 @@ type Share struct {
 	Token     string
 	Name      string
 	CreatedAt time.Time
+	Password  string // a slow hash of the link's password, "" for none
 }
 
 func (s *Store) AddShare(ctx context.Context, siteID int64, name string) (Share, error) {
@@ -41,7 +42,7 @@ func (s *Store) AddShare(ctx context.Context, siteID int64, name string) (Share,
 }
 
 func (s *Store) Shares(ctx context.Context, siteID int64) ([]Share, error) {
-	rows, err := s.rdb.QueryContext(ctx, `SELECT id, site_id, token, name, created_at FROM shares WHERE site_id = ? ORDER BY created_at, id`, siteID)
+	rows, err := s.rdb.QueryContext(ctx, `SELECT id, site_id, token, name, created_at, password FROM shares WHERE site_id = ? ORDER BY created_at, id`, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +51,7 @@ func (s *Store) Shares(ctx context.Context, siteID int64) ([]Share, error) {
 	for rows.Next() {
 		var sh Share
 		var created int64
-		if err := rows.Scan(&sh.ID, &sh.SiteID, &sh.Token, &sh.Name, &created); err != nil {
+		if err := rows.Scan(&sh.ID, &sh.SiteID, &sh.Token, &sh.Name, &created, &sh.Password); err != nil {
 			return nil, err
 		}
 		sh.CreatedAt = time.Unix(created, 0)
@@ -64,15 +65,26 @@ func (s *Store) DeleteShare(ctx context.Context, siteID, id int64) error {
 	return err
 }
 
-// ShareSite returns the site a shared link shows.
-func (s *Store) ShareSite(ctx context.Context, token string) (Site, bool, error) {
+// SetSharePassword sets a link's password hash ("" removes the password).
+func (s *Store) SetSharePassword(ctx context.Context, siteID, id int64, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE shares SET password = ? WHERE id = ? AND site_id = ?`, hash, id, siteID)
+	return err
+}
+
+// ShareByToken returns a shared link and the site it shows.
+func (s *Store) ShareByToken(ctx context.Context, token string) (Share, Site, bool, error) {
+	var sh Share
 	var st Site
-	var created int64
-	err := s.rdb.QueryRowContext(ctx, `SELECT s.id, s.domain, s.created_at FROM shares h JOIN sites s ON s.id = h.site_id WHERE h.token = ?`, token).
-		Scan(&st.ID, &st.Domain, &created)
+	var created, siteCreated int64
+	err := s.rdb.QueryRowContext(ctx, `SELECT h.id, h.site_id, h.token, h.name, h.created_at, h.password, s.domain, s.created_at
+		FROM shares h JOIN sites s ON s.id = h.site_id WHERE h.token = ?`, token).
+		Scan(&sh.ID, &sh.SiteID, &sh.Token, &sh.Name, &created, &sh.Password, &st.Domain, &siteCreated)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Site{}, false, nil
+		return Share{}, Site{}, false, nil
 	}
-	st.CreatedAt = time.Unix(created, 0)
-	return st, err == nil, err
+	if err != nil {
+		return Share{}, Site{}, false, err
+	}
+	sh.CreatedAt, st.ID, st.CreatedAt = time.Unix(created, 0), sh.SiteID, time.Unix(siteCreated, 0)
+	return sh, st, true, nil
 }

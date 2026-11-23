@@ -29,7 +29,7 @@ const SessionTimeout = 30 * time.Minute
 // the browser reports any time on it; their visits are kept but never shown.
 const MinEngaged = time.Second
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 // Store uses two pools: db, the single writer, and rdb, read-only
 // connections for dashboard queries. With WAL, readers never block the
@@ -206,7 +206,8 @@ CREATE TABLE IF NOT EXISTS shares (
 	site_id    INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
 	token      TEXT NOT NULL UNIQUE,
 	name       TEXT NOT NULL,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	password   TEXT NOT NULL DEFAULT '' -- slow hash, see web; '' = no password
 );
 
 -- Keys for the stats API: sha256 of the key, so a leaked database can't be
@@ -309,6 +310,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
+	// shares came with v6, its password column with v7.
+	if err := s.addColumn(ctx, "shares", "password", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
 	// Indexes on columns that a migration adds to older databases.
 	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS sessions_import ON sessions(import_id) WHERE import_id IS NOT NULL`); err != nil {
 		return err
@@ -375,17 +380,23 @@ func (s *Store) migrateV1(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// migrateV5 adds sessions.import_id. A database that an older version opened
-// after this one has user_version 5 again but already has the column.
+// migrateV5 adds sessions.import_id.
 func (s *Store) migrateV5(ctx context.Context) error {
+	return s.addColumn(ctx, "sessions", "import_id", "INTEGER")
+}
+
+// addColumn adds a column unless the table has it already: a database that
+// an older version opened after a newer one has the older user_version
+// again, but keeps the newer columns.
+func (s *Store) addColumn(ctx context.Context, table, column, def string) error {
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'import_id'`).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN import_id INTEGER`)
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, def))
 	return err
 }
 
