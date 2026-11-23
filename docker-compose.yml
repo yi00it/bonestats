@@ -41,6 +41,13 @@ configs:
       	reverse_proxy bonestats:8080
       }
 
+# IPv6 on the network lets Docker forward IPv6 visitors with their real
+# address. Without it, Docker relays them from its own gateway IP, so they
+# get no country, look like one visitor per browser, and share a rate limit.
+networks:
+  default:
+    enable_ipv6: true
+
 volumes:
   bonestats-data:
   caddy-data:
