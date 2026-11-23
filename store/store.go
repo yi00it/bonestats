@@ -24,7 +24,12 @@ import (
 // SessionTimeout is the inactivity gap after which a new visit starts.
 const SessionTimeout = 30 * time.Minute
 
-const schemaVersion = 3
+// MinEngaged is how long a page must be visible before its visit counts.
+// Bots that run the tracking script usually load a page and are gone before
+// the browser reports any time on it; their visits are kept but never shown.
+const MinEngaged = time.Second
+
+const schemaVersion = 4
 
 // Store uses two pools: db, the single writer, and rdb, read-only
 // connections for dashboard queries. With WAL, readers never block the
@@ -74,7 +79,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	os              TEXT NOT NULL DEFAULT '',
 	os_version      TEXT NOT NULL DEFAULT '',
 	device          TEXT NOT NULL DEFAULT '',
-	screen          TEXT NOT NULL DEFAULT ''  -- width bucket
+	screen          TEXT NOT NULL DEFAULT '', -- width bucket
+	human           INTEGER NOT NULL DEFAULT 0 -- 1 once a page was visible for MinEngaged
 );
 CREATE INDEX IF NOT EXISTS sessions_visitor ON sessions(site_id, visitor, last_seen);
 CREATE INDEX IF NOT EXISTS sessions_site_started ON sessions(site_id, started_at);
@@ -218,6 +224,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if version >= 1 && version < 4 {
+		if err := s.migrateV3(ctx); err != nil {
+			return err
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -279,6 +290,25 @@ func (s *Store) migrateV1(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET channel = ? WHERE id = ?`, ch, id); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// migrateV3 adds sessions.human and sets it for the visits that already
+// count.
+func (s *Store) migrateV3(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN human INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET human = 1
+		WHERE EXISTS (SELECT 1 FROM events e WHERE e.session_id = sessions.id AND e.engaged >= ?)`,
+		MinEngaged.Milliseconds()); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -362,10 +392,10 @@ func (s *Store) DeleteSite(ctx context.Context, id int64) error {
 	return err
 }
 
-// FirstVisit returns when the site's oldest stored visit started.
+// FirstVisit returns when the site's oldest counted visit started.
 func (s *Store) FirstVisit(ctx context.Context, siteID int64) (time.Time, bool) {
 	var ts sql.NullInt64
-	s.rdb.QueryRowContext(ctx, `SELECT MIN(started_at) FROM sessions WHERE site_id = ?`, siteID).Scan(&ts)
+	s.rdb.QueryRowContext(ctx, `SELECT MIN(started_at) FROM sessions WHERE site_id = ? AND human = 1`, siteID).Scan(&ts)
 	return time.Unix(ts.Int64, 0), ts.Valid
 }
 
@@ -475,8 +505,9 @@ type Leave struct {
 	Engaged         *int64 // ms
 }
 
-// It reports whether the visitor had a current visit; without one nothing is
-// stored.
+// A visit starts to count once one of its pages has been visible for
+// MinEngaged. It reports whether the visitor has a current visit that
+// counts; without a current visit nothing is stored.
 func (s *Store) RecordLeave(ctx context.Context, l Leave) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -506,7 +537,14 @@ func (s *Store) RecordLeave(ctx context.Context, l Leave) (bool, error) {
 			return false, err
 		}
 	}
-	return true, tx.Commit()
+	var human bool
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE sessions SET human = human OR EXISTS (SELECT 1 FROM events WHERE engaged >= ? AND id = `+target+`)
+		WHERE id = ? RETURNING human`,
+		MinEngaged.Milliseconds(), sessionID, l.Path, sessionID).Scan(&human); err != nil {
+		return false, err
+	}
+	return human, tx.Commit()
 }
 
 type Vitals struct {

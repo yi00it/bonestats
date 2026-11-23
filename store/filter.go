@@ -219,16 +219,17 @@ func (q Query) conds(eventScope bool) (string, []any) {
 	return sb.String(), args
 }
 
-// sessionScope is the FROM/WHERE for visit-level metrics.
+// sessionScope is the FROM/WHERE for visit-level metrics. Both scopes leave
+// out visits that never counted (see MinEngaged).
 func (q Query) sessionScope() (string, []any) {
 	c, a := q.conds(false)
-	return `FROM sessions s WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.pageviews > 0` + c,
+	return `FROM sessions s WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.pageviews > 0 AND s.human = 1` + c,
 		append([]any{q.SiteID, q.From.Unix(), q.To.Unix()}, a...)
 }
 
 // eventScope is the FROM/WHERE for event-level metrics.
 func (q Query) eventScope() (string, []any) {
 	c, a := q.conds(true)
-	return `FROM events e JOIN sessions s ON s.id = e.session_id WHERE e.site_id = ? AND e.ts >= ? AND e.ts < ?` + c,
+	return `FROM events e JOIN sessions s ON s.id = e.session_id WHERE e.site_id = ? AND e.ts >= ? AND e.ts < ? AND s.human = 1` + c,
 		append([]any{q.SiteID, q.From.Unix(), q.To.Unix()}, a...)
 }
