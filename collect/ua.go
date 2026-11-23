@@ -10,14 +10,24 @@ import (
 // A deliberately small user-agent parser: we only need coarse browser and OS
 // families, never versions or anything that helps fingerprint a visitor.
 
-var botRe = regexp.MustCompile(`(?i)bot|crawl|spider|slurp|headless|lighthouse|pingdom|monitor|curl|wget|python|go-http|java/|okhttp|phantomjs|preview|facebookexternalhit|scrapy`)
+var botRe = regexp.MustCompile(`(?i)bot|crawl|spider|slurp|headless|lighthouse|pingdom|monitor|curl|wget|python|go-http|java/|okhttp|phantomjs|preview|facebookexternalhit|scrapy|inspectiontool|googleother|mediapartners|feedfetcher|pagespeed|gtmetrix|ptst/|externalagent|chatgpt-user|yeti/`)
 
 func isBot(ua string) bool {
-	return ua == "" || botRe.MatchString(ua)
+	// Cubot is a phone maker whose name is in its phones' user agents.
+	return ua == "" || botRe.MatchString(strings.ReplaceAll(ua, "CUBOT", ""))
 }
 
 func parseBrowser(ua string) string {
 	switch {
+	// Apps that open links in their own browser.
+	case strings.Contains(ua, "Instagram"):
+		return "Instagram"
+	case strings.Contains(ua, "FBAN/"), strings.Contains(ua, "FBAV/"), strings.Contains(ua, "FB_IAB/"):
+		return "Facebook"
+	case strings.Contains(ua, "musical_ly"), strings.Contains(ua, "BytedanceWebview"), strings.Contains(ua, "TikTok"):
+		return "TikTok"
+	case strings.Contains(ua, "DuckDuckGo/"), strings.Contains(ua, "Ddg/"):
+		return "DuckDuckGo"
 	case strings.Contains(ua, "Edg/"), strings.Contains(ua, "EdgA/"), strings.Contains(ua, "EdgiOS/"):
 		return "Edge"
 	case strings.Contains(ua, "OPR/"), strings.Contains(ua, "Opera"):
@@ -58,15 +68,27 @@ func parseOS(ua string) string {
 	}
 }
 
-// deviceFromWidth classifies by viewport width reported by the tracker; the
-// width itself is not stored.
-func deviceFromWidth(w int) string {
+// deviceClass tells phones, tablets and desktops apart. The user agent
+// decides where it can: the viewport width alone would call a phone held
+// sideways or a narrow desktop window a tablet. An iPad asking for desktop
+// sites calls itself a Mac, so a Mac with a touch screen is a tablet. Only
+// for an unknown user agent does the width decide; neither the width nor
+// the number of touch points is stored.
+func deviceClass(ua string, width, touch int) string {
 	switch {
-	case w <= 0:
-		return ""
-	case w < 576:
+	case strings.Contains(ua, "iPad"), strings.Contains(ua, "Tablet"),
+		strings.Contains(ua, "Macintosh") && touch > 1,
+		strings.Contains(ua, "Android") && !strings.Contains(ua, "Mobile"):
+		return "Tablet"
+	case strings.Contains(ua, "Mobi"), strings.Contains(ua, "iPhone"), strings.Contains(ua, "iPod"):
 		return "Mobile"
-	case w < 992:
+	case parseOS(ua) != "Other":
+		return "Desktop"
+	case width <= 0:
+		return ""
+	case width < 576:
+		return "Mobile"
+	case width < 992:
 		return "Tablet"
 	default:
 		return "Desktop"
@@ -86,6 +108,7 @@ var (
 	}
 	androidRe = regexp.MustCompile(`Android (\d+)`)
 	iosRe     = regexp.MustCompile(`OS (\d+)_`)
+	safariRe  = regexp.MustCompile(`Version/(\d+)`)
 	macRe     = regexp.MustCompile(`Mac OS X (\d+)[_.](\d+)`)
 	windowsRe = regexp.MustCompile(`Windows NT (\d+\.\d+)`)
 )
@@ -111,10 +134,16 @@ func osVersion(ua, os string) string {
 			}
 		}
 	case "Android":
-		if m := androidRe.FindStringSubmatch(ua); m != nil {
+		// Chrome says "Android 10; K" on every version of Android.
+		if m := androidRe.FindStringSubmatch(ua); m != nil && !strings.Contains(ua, "Android 10; K)") {
 			return "Android " + m[1]
 		}
 	case "iOS":
+		// Since version 26, Safari reports iOS as 18 and its own version is
+		// the version of iOS.
+		if m := safariRe.FindStringSubmatch(ua); m != nil && len(m[1]) == 2 && m[1] >= "26" {
+			return "iOS " + m[1]
+		}
 		if m := iosRe.FindStringSubmatch(ua); m != nil {
 			return "iOS " + m[1]
 		}

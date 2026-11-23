@@ -48,8 +48,10 @@ func TestSessionsAndSummary(t *testing.T) {
 	if want := 200.0 / 3; sum.BounceRate < want-0.01 || sum.BounceRate > want+0.01 {
 		t.Errorf("bounce rate = %.2f, want %.2f", sum.BounceRate, want)
 	}
-	if sum.AvgDuration != 40*time.Second {
-		t.Errorf("avg duration = %v, want 40s", sum.AvgDuration)
+	// The duration of a visit is the time its pages were visible: view
+	// reports MinEngaged for each of the four pageviews in three visits.
+	if want := 4 * MinEngaged / 3; sum.AvgDuration != want.Truncate(time.Second) {
+		t.Errorf("avg duration = %v, want %v", sum.AvgDuration, want)
 	}
 }
 
@@ -205,7 +207,8 @@ func TestMigrateV3(t *testing.T) {
 	if err := s.RecordEvent(ctx, Event{SiteID: site.ID, Time: t0, Visitor: 2, Name: "pageview", Path: "/bot"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{`ALTER TABLE sessions DROP COLUMN human`, `PRAGMA user_version = 3`} {
+	for _, q := range []string{`ALTER TABLE sessions DROP COLUMN human`, `ALTER TABLE sessions DROP COLUMN engaged`,
+		`DROP INDEX vitals_event`, `ALTER TABLE vitals DROP COLUMN event_id`, `PRAGMA user_version = 3`} {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
 		}

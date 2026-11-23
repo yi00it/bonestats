@@ -48,7 +48,7 @@ func (s *Store) Summary(ctx context.Context, q Query) (Summary, error) {
 	var bounces int64
 	var dur sql.NullFloat64
 	err := s.rdb.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0), AVG(s.last_seen - s.started_at) `+from,
+		SELECT COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0), AVG(s.engaged) / 1000 `+from,
 		args...).Scan(&sum.Visitors, &sum.Visits, &bounces, &dur)
 	if err != nil {
 		return sum, err
@@ -152,7 +152,7 @@ func (s *Store) Timeseries(ctx context.Context, q Query, iv Interval) (Series, e
 		"FROM b CROSS JOIN sessions s WHERE s.started_at >= b.lo AND s.started_at < b.hi AND ", 1)
 	rows, err := s.rdb.QueryContext(ctx, bucketTable+`
 		SELECT b.k, COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0),
-			COALESCE(SUM(s.last_seen - s.started_at), 0) `+from+` GROUP BY b.k`, append([]any{ranges}, args...)...)
+			COALESCE(SUM(s.engaged), 0) / 1000.0 `+from+` GROUP BY b.k`, append([]any{ranges}, args...)...)
 	if err != nil {
 		return Series{}, err
 	}
@@ -289,10 +289,15 @@ func (s *Store) breakdown(ctx context.Context, q Query, dim string, limit int) (
 	if dim == "region" || dim == "city" {
 		hint = "MAX(s.country)"
 	}
+	// Every visit has a source: one without a referrer is direct.
+	label, known := "s."+d.Col, " AND s."+d.Col+" <> ''"
+	if dim == "source" {
+		label, known = "CASE WHEN s.referrer = '' THEN '"+DirectSource+"' ELSE s.referrer END", ""
+	}
 	from, args := q.sessionScope()
 	rs, err := s.rdb.QueryContext(ctx, fmt.Sprintf(`
-		SELECT s.%[1]s, %[2]s, COUNT(DISTINCT s.visitor), COUNT(*) %[3]s AND s.%[1]s <> ''
-		GROUP BY s.%[1]s ORDER BY 3 DESC, 4 DESC LIMIT ?`, d.Col, hint, from), append(args, limit)...)
+		SELECT %[1]s, %[2]s, COUNT(DISTINCT s.visitor), COUNT(*) %[3]s%[4]s
+		GROUP BY 1 ORDER BY 3 DESC, 4 DESC LIMIT ?`, label, hint, from, known), append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -563,21 +568,30 @@ type PageVitals struct {
 	P75     map[string]*float64
 }
 
-// vitalsScope applies the filters vitals can honor (page and device).
+// vitalsScope applies the filters to the page loads. Page and device are
+// stored with the vitals; every other filter goes through the visit of the
+// load's pageview, so it leaves out vitals stored before they were linked
+// to one.
 func (q Query) vitalsScope() (string, []any) {
-	where := `FROM vitals WHERE site_id = ? AND ts >= ? AND ts < ?`
+	where := `FROM vitals v LEFT JOIN events e ON e.id = v.event_id LEFT JOIN sessions s ON s.id = e.session_id
+		WHERE v.site_id = ? AND v.ts >= ? AND v.ts < ?`
 	args := []any{q.SiteID, q.From.Unix(), q.To.Unix()}
+	var rest []Filter
 	for _, f := range q.Filters {
 		switch f.Dim {
 		case "page":
-			where += " AND " + opCond("path", f.Op)
+			where += " AND " + opCond("v.path", f.Op)
 			args = append(args, f.Value)
 		case "device":
-			where += " AND " + opCond("device", f.Op)
+			where += " AND " + opCond("v.device", f.Op)
 			args = append(args, f.Value)
+		default:
+			rest = append(rest, f)
 		}
 	}
-	return where, args
+	q.Filters = rest
+	c, a := q.conds(false)
+	return where + c, append(args, a...)
 }
 
 // VitalsSummary returns the 75th percentile of each metric (the value Google
@@ -590,7 +604,7 @@ func (s *Store) VitalsSummary(ctx context.Context, q Query) (map[string]VitalSta
 		var p75 sql.NullFloat64
 		err := s.rdb.QueryRowContext(ctx, fmt.Sprintf(`
 			SELECT MIN(CASE WHEN pr >= 0.75 THEN %[1]s END), COUNT(*) FROM (
-				SELECT %[1]s, cume_dist() OVER (ORDER BY %[1]s) AS pr %[2]s AND %[1]s IS NOT NULL)`, m, from),
+				SELECT v.%[1]s, cume_dist() OVER (ORDER BY v.%[1]s) AS pr %[2]s AND v.%[1]s IS NOT NULL)`, m, from),
 			args...).Scan(&p75, &st.Samples)
 		if err != nil {
 			return nil, err
@@ -604,7 +618,7 @@ func (s *Store) VitalsSummary(ctx context.Context, q Query) (map[string]VitalSta
 // VitalsByPage returns p75 of every metric for the pages with the most samples.
 func (s *Store) VitalsByPage(ctx context.Context, q Query, limit int) ([]PageVitals, error) {
 	from, args := q.vitalsScope()
-	rows, err := s.rdb.QueryContext(ctx, `SELECT path, COUNT(*) `+from+` GROUP BY path ORDER BY 2 DESC LIMIT ?`, append(args, limit)...)
+	rows, err := s.rdb.QueryContext(ctx, `SELECT v.path, COUNT(*) `+from+` GROUP BY v.path ORDER BY 2 DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -627,7 +641,7 @@ func (s *Store) VitalsByPage(ctx context.Context, q Query, limit int) ([]PageVit
 	for _, m := range VitalMetrics {
 		rs, err := s.rdb.QueryContext(ctx, fmt.Sprintf(`
 			SELECT path, MIN(%[1]s) FROM (
-				SELECT path, %[1]s, cume_dist() OVER (PARTITION BY path ORDER BY %[1]s) AS pr %[2]s AND %[1]s IS NOT NULL)
+				SELECT v.path, v.%[1]s, cume_dist() OVER (PARTITION BY v.path ORDER BY v.%[1]s) AS pr %[2]s AND v.%[1]s IS NOT NULL)
 			WHERE pr >= 0.75 GROUP BY path`, m, from), args...)
 		if err != nil {
 			return nil, err

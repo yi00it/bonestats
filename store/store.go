@@ -29,7 +29,7 @@ const SessionTimeout = 30 * time.Minute
 // the browser reports any time on it; their visits are kept but never shown.
 const MinEngaged = time.Second
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Store uses two pools: db, the single writer, and rdb, read-only
 // connections for dashboard queries. With WAL, readers never block the
@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	os_version      TEXT NOT NULL DEFAULT '',
 	device          TEXT NOT NULL DEFAULT '',
 	screen          TEXT NOT NULL DEFAULT '', -- width bucket
-	human           INTEGER NOT NULL DEFAULT 0 -- 1 once a page was visible for MinEngaged
+	human           INTEGER NOT NULL DEFAULT 0, -- 1 once a page was visible for MinEngaged
+	engaged         INTEGER NOT NULL DEFAULT 0  -- visible time on all pages of the visit in ms
 );
 CREATE INDEX IF NOT EXISTS sessions_visitor ON sessions(site_id, visitor, last_seen);
 CREATE INDEX IF NOT EXISTS sessions_site_started ON sessions(site_id, started_at);
@@ -103,19 +104,23 @@ CREATE INDEX IF NOT EXISTS events_site_ts ON events(site_id, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id);
 
 -- Core Web Vitals, one row per page load. NULL = metric not reported.
+-- event_id is the load's pageview, so a later report from the same load
+-- updates its row and the row can be filtered by the visit's attributes.
 CREATE TABLE IF NOT EXISTS vitals (
-	id      INTEGER PRIMARY KEY,
-	site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-	ts      INTEGER NOT NULL,
-	path    TEXT NOT NULL,
-	device  TEXT NOT NULL DEFAULT '',
-	lcp     REAL,
-	cls     REAL,
-	inp     REAL,
-	fcp     REAL,
-	ttfb    REAL
+	id       INTEGER PRIMARY KEY,
+	site_id  INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	ts       INTEGER NOT NULL,
+	path     TEXT NOT NULL,
+	device   TEXT NOT NULL DEFAULT '',
+	lcp      REAL,
+	cls      REAL,
+	inp      REAL,
+	fcp      REAL,
+	ttfb     REAL,
+	event_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS vitals_site_ts ON vitals(site_id, ts);
+CREATE UNIQUE INDEX IF NOT EXISTS vitals_event ON vitals(event_id);
 
 -- A goal is either a custom event name or a pageview path pattern (* = any).
 CREATE TABLE IF NOT EXISTS goals (
@@ -229,6 +234,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if version >= 1 && version < 5 {
+		if err := s.migrateV4(ctx); err != nil {
+			return err
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
@@ -309,6 +319,82 @@ func (s *Store) migrateV3(ctx context.Context) error {
 		WHERE EXISTS (SELECT 1 FROM events e WHERE e.session_id = sessions.id AND e.engaged >= ?)`,
 		MinEngaged.Milliseconds()); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// migrateV4 adds the visit's visible time and the vitals' pageview, and
+// brings stored visits in line with how new ones are recorded: paths are
+// percent-decoded, sources get their names, a visit without a referrer takes
+// its UTM source as source, and channels are derived again.
+func (s *Store) migrateV4(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`ALTER TABLE sessions ADD COLUMN engaged INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vitals ADD COLUMN event_id INTEGER`,
+		`UPDATE sessions SET engaged = COALESCE((SELECT SUM(e.engaged) FROM events e WHERE e.session_id = sessions.id), 0)`,
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+
+	for _, c := range [][2]string{{"events", "path"}, {"sessions", "entry_path"}, {"sessions", "exit_path"},
+		{"sessions", "referrer_url"}, {"vitals", "path"}, {"goals", "page_path"}} {
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE instr(%[1]s, '%%') > 0`, c[1], c[0]))
+		if err != nil {
+			return err
+		}
+		decoded := map[string]string{}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			if d := UnescapePath(p); d != p {
+				decoded[p] = d
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for from, to := range decoded {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE OR IGNORE %s SET %s = ? WHERE %[2]s = ?`, c[0], c[1]), to, from); err != nil {
+				return err
+			}
+		}
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT referrer, utm_source, utm_medium FROM sessions`)
+	if err != nil {
+		return err
+	}
+	type key struct{ ref, src, med string }
+	var keys []key
+	for rows.Next() {
+		var k key
+		if err := rows.Scan(&k.ref, &k.src, &k.med); err != nil {
+			rows.Close()
+			return err
+		}
+		keys = append(keys, k)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET channel = ?, referrer = ?
+			WHERE referrer = ? AND utm_source = ? AND utm_medium = ?`,
+			Channel(k.ref, k.src, k.med), Source(k.ref, k.src), k.ref, k.src, k.med); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -494,20 +580,34 @@ func currentSession(ctx context.Context, q querier, siteID, visitor, now int64) 
 	return id, err
 }
 
-// Leave records that the visitor left (or hid) a page: it extends the visit
-// so its duration includes time on the last page, and stores scroll depth
-// and engaged time on that page's pageview.
+// HasCurrentVisit reports whether the visitor has a visit that is still
+// going on.
+func (s *Store) HasCurrentVisit(ctx context.Context, siteID, visitor int64, now time.Time) (bool, error) {
+	_, err := currentSession(ctx, s.rdb, siteID, visitor, now.Unix())
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Leave records that the visitor left (or hid) a page, or is still reading
+// it: it stores scroll depth and visible time on that page's pageview and
+// adds the time to the visit.
 type Leave struct {
 	SiteID, Visitor int64
 	Time            time.Time
 	Path            string
-	Scroll          *int64 // percent
-	Engaged         *int64 // ms
+	Scroll          *int64  // percent
+	Engaged         *int64  // ms
+	Vitals          *Vitals // the page load's vitals so far, if reported
 }
 
-// A visit starts to count once one of its pages has been visible for
-// MinEngaged. It reports whether the visitor has a current visit that
-// counts; without a current visit nothing is stored.
+// RecordLeave attaches the report to the visitor's latest pageview of the
+// path, in whichever of their visits it is: a tab can be read long after
+// the visit's 30 minutes of inactivity. Only a visit that is still current
+// is extended. A visit starts to count once one of its pages has been
+// visible for MinEngaged. It reports whether the pageview's visit counts;
+// without such a pageview nothing is stored.
 func (s *Store) RecordLeave(ctx context.Context, l Leave) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -515,34 +615,46 @@ func (s *Store) RecordLeave(ctx context.Context, l Leave) (bool, error) {
 	}
 	defer tx.Rollback()
 	now := l.Time.Unix()
-	sessionID, err := currentSession(ctx, tx, l.SiteID, l.Visitor, now)
+	var eventID, sessionID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT e.id, s.id FROM sessions s JOIN events e ON e.session_id = s.id
+		WHERE s.site_id = ? AND s.visitor = ? AND e.name = 'pageview' AND e.path = ?
+		ORDER BY e.ts DESC, e.id DESC LIMIT 1`, l.SiteID, l.Visitor, l.Path).Scan(&eventID, &sessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	} else if err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seen = MAX(last_seen, ?) WHERE id = ?`, now, sessionID); err != nil {
-		return false, err
-	}
-	const target = `(SELECT id FROM events WHERE session_id = ? AND name = 'pageview' AND path = ? ORDER BY ts DESC, id DESC LIMIT 1)`
-	if l.Scroll != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE events SET scroll = MAX(COALESCE(scroll, 0), ?) WHERE id = `+target,
-			*l.Scroll, sessionID, l.Path); err != nil {
-			return false, err
-		}
-	}
+	var engaged int64
 	if l.Engaged != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE events SET engaged = COALESCE(engaged, 0) + ? WHERE id = `+target,
-			*l.Engaged, sessionID, l.Path); err != nil {
-			return false, err
-		}
+		engaged = *l.Engaged
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE events SET
+			scroll = CASE WHEN ?1 IS NULL THEN scroll ELSE MAX(COALESCE(scroll, 0), ?1) END,
+			engaged = CASE WHEN ?2 IS NULL THEN engaged ELSE COALESCE(engaged, 0) + ?2 END
+		WHERE id = ?3`, l.Scroll, l.Engaged, eventID); err != nil {
+		return false, err
 	}
 	var human bool
 	if err := tx.QueryRowContext(ctx, `
-		UPDATE sessions SET human = human OR EXISTS (SELECT 1 FROM events WHERE engaged >= ? AND id = `+target+`)
+		UPDATE sessions SET engaged = engaged + ?,
+			last_seen = CASE WHEN last_seen >= ? THEN MAX(last_seen, ?) ELSE last_seen END,
+			human = human OR EXISTS (SELECT 1 FROM events WHERE id = ? AND engaged >= ?)
 		WHERE id = ? RETURNING human`,
-		MinEngaged.Milliseconds(), sessionID, l.Path, sessionID).Scan(&human); err != nil {
+		engaged, now-int64(SessionTimeout.Seconds()), now, eventID, MinEngaged.Milliseconds(), sessionID).Scan(&human); err != nil {
 		return false, err
+	}
+	// Vitals only count for a page load that belongs to a counted visit. A
+	// later report of the same load replaces the values it measured again.
+	if v := l.Vitals; v != nil && human {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO vitals(site_id, ts, path, device, lcp, cls, inp, fcp, ttfb, event_id)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(event_id) DO UPDATE SET lcp = COALESCE(excluded.lcp, lcp), cls = COALESCE(excluded.cls, cls),
+				inp = COALESCE(excluded.inp, inp), fcp = COALESCE(excluded.fcp, fcp), ttfb = COALESCE(excluded.ttfb, ttfb)`,
+			l.SiteID, now, l.Path, v.Device, v.LCP, v.CLS, v.INP, v.FCP, v.TTFB, eventID); err != nil {
+			return false, err
+		}
 	}
 	return human, tx.Commit()
 }
@@ -555,6 +667,7 @@ type Vitals struct {
 	LCP, CLS, INP, FCP, TTFB *float64
 }
 
+// RecordVitals stores vitals that belong to no recorded pageview.
 func (s *Store) RecordVitals(ctx context.Context, v Vitals) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO vitals(site_id, ts, path, device, lcp, cls, inp, fcp, ttfb)
