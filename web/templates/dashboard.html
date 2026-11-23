@@ -225,6 +225,7 @@
 
   <footer>
     {{template "mark"}}
+    <p><a href="{{.ExportURL}}" download>Export this view as CSV</a></p>
     {{if .MultiDay}}<p>Visitors are counted per day without cookies, so someone who returns on a different day is counted again.</p>{{end}}
     {{if .GeoEnabled}}<p><a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></p>{{end}}
     {{template "source"}}

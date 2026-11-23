@@ -83,6 +83,7 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 - **Funnels:** 2 to 8 goals that visitors must complete in order within one visit, with the drop-off at each step.
 - **Web performance:** the 75th percentile of LCP, INP, CLS, FCP and TTFB from real visitors, rated good, needs improvement or poor, overall and per page. It follows the dashboard's filters.
 - **Live:** the dashboard refreshes every 15 seconds while it's open and shows how many visitors are online. Numbers that changed flicker to their new value; open tabs and your scroll position are kept.
+- **Export and API:** download the current view (range and filters included) as a ZIP of CSV files, or read the same numbers from scripts with the read-only [stats API](docs/API.md), using keys you create on the Sites page.
 - **Light and dark:** follows your system setting, or pick one with the switch in the header (remembered in your browser).
 
 ![Funnel and web performance](docs/funnel-vitals.png)

@@ -5,6 +5,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"math"
@@ -219,58 +220,30 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sites, err := st.Sites(ctx)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	if len(sites) == 0 {
+	v, err := s.resolveView(ctx, st, qs)
+	if errors.Is(err, errNoSites) {
 		http.Redirect(w, r, "/sites", http.StatusSeeOther)
 		return
 	}
-	site := sites[0]
-	for _, other := range sites {
-		if other.Domain == qs.Get("site") {
-			site = other
-		}
+	if err != nil {
+		serverError(w, err)
+		return
 	}
-	qs.Set("site", site.Domain)
-	if qs.Get("range") == "" {
-		qs.Set("range", "30d")
-	}
+	qs = v.qs
 	n := nav{qs}
-
-	goals, err := st.Goals(ctx, site.ID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	funnels, err := st.Funnels(ctx, site.ID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-
-	now := time.Now().In(s.Location)
-	first, ok := st.FirstVisit(ctx, site.ID)
-	if !ok {
-		first = now
-	}
-	from, to, label := window(qs.Get("range"), qs.Get("from"), qs.Get("to"), now, first)
+	sites, site, goals, funnels, now := v.sites, v.site, v.goals, v.funnels, v.now
+	from, to, label, q := v.from, v.to, v.label, v.q
 	iv := interval(from, to)
 
-	var filters []store.Filter
 	var chips []chip
 	for i, raw := range qs["f"] {
 		f, ok := store.ParseFilter(raw)
 		if !ok {
 			continue
 		}
-		filters = append(filters, f)
 		d, _ := store.DimensionByKey(f.Dim)
 		chips = append(chips, chip{f.Dim, d.Label, opLabels[f.Op], f.Value, n.RemoveFilter(i)})
 	}
-	q := store.Query{SiteID: site.ID, From: from, To: to, Location: s.Location, Filters: filters, Goals: goals}
 
 	d := &dashData{ctx: ctx, st: st, q: q, n: n}
 
@@ -470,6 +443,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		"VitalInfo":   vitalInfo,
 		"GeoEnabled":  s.GeoEnabled,
 		"MultiDay":    to.Sub(from) > 24*time.Hour,
+		"ExportURL":   "/export?" + qs.Encode(),
 	})
 }
 

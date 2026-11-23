@@ -496,3 +496,10 @@ ul { padding-left: 20px; } li { margin: 4px 0; }
 .funnel-def small { color: var(--muted); }
 .funnel-def form { margin: 0; }
 .funnel-form { border-top: 1px solid var(--hair); margin-top: 14px; padding-top: 4px; }
+.key-form { display: flex; gap: 8px; margin-top: 14px; }
+.key-form input { flex: 1; min-width: 0; }
+#api small { color: var(--muted); display: block; margin-top: 10px; font: 11.5px/1.6 var(--mono); }
+#api .list form { margin: 0; }
+#api .list td:last-child { text-align: right; }
+.new-key { border: 1px solid var(--led); border-radius: 8px; padding: 4px 14px; margin: 14px 0; }
+.new-key pre { white-space: pre-wrap; word-break: break-all; }

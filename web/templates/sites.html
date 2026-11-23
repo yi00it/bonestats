@@ -54,6 +54,41 @@ bonestats("purchase", {plan: "pro"}, 29.90)  // revenue in the goal's currency</
     <p>404 pages: add <code>&lt;script&gt;bonestats("404", {path: location.pathname})&lt;/script&gt;</code> to your "not found" page and a <code>404</code> goal. Filter by that goal and the Properties card lists the broken URLs.</p>
   </section>
 
+  {{if .APIEnabled}}
+  <section class="card" id="api">
+    <h2>Stats API</h2>
+    <p>Read your statistics from scripts and other tools. Send a key as <code>Authorization: Bearer &lt;key&gt;</code>; the parameters are the same as in the dashboard's URL. <a href="https://github.com/yi00it/bonestats/blob/master/docs/API.md" rel="noopener">API documentation</a></p>
+    {{with .NewKey}}
+    <div class="new-key">
+      <p><strong>Your new key.</strong> Copy it now: it is stored only as a hash and won't be shown again.</p>
+      <pre><code>{{.}}</code></pre>
+      <pre><code>curl -H "Authorization: Bearer {{.}}" "{{$.BaseURL}}/api/v1/summary?site={{with $.Sites}}{{(index . 0).Domain}}{{else}}example.com{{end}}&amp;range=30d"</code></pre>
+    </div>
+    {{end}}
+    {{if .APIKeys}}
+    <div class="scroll">
+    <table class="list">
+      <thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+      {{range .APIKeys}}
+      <tr>
+        <td>{{.Name}}</td><td><code>{{.Prefix}}…</code></td><td>{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+        <td>{{with .LastUsed}}{{.Format "Jan 2, 2006 15:04"}}{{else}}Never{{end}}</td>
+        <td><form method="post" action="/api-keys/{{.ID}}/delete" data-confirm="Revoke the key {{.Name}}? Scripts that use it stop working."><button class="danger">Revoke</button></form></td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{end}}
+    <form method="post" action="/api-keys" class="key-form">
+      <input name="name" placeholder="Key name, e.g. Grafana" aria-label="Key name" maxlength="100" required>
+      <button type="submit">Create key</button>
+    </form>
+    <small>A key can read the statistics of every site, but can't change anything.</small>
+  </section>
+  {{end}}
+
   <section class="card">
     <h2>Privacy</h2>
     <ul>
