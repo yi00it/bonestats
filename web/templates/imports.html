@@ -1,0 +1,56 @@
+{{define "head"}}<script defer src="{{static "app.js"}}"></script>{{end}}
+
+{{define "content"}}
+{{template "nav" .}}
+<main class="narrow">
+  <p class="crumbs"><a href="/sites">Sites</a> / <a href="/?site={{.Site.Domain}}">{{.Site.Domain}}</a></p>
+  <h1>Import</h1>
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+  {{with .Done}}<p class="notice">Imported {{num .Import.Visits}} visits and {{num .Import.Pageviews}} pageviews from {{.Import.FirstDay}} to {{.Import.LastDay}}.{{if .Skipped}} {{num .Skipped}} rows from days that bonestats recorded itself were skipped.{{end}}</p>{{end}}
+
+  <section class="card">
+    <h2>Imported data</h2>
+    {{if .Imports}}
+    <div class="scroll">
+    <table class="list">
+      <thead><tr><th>From</th><th>Days</th><th class="n">Visits</th><th class="n">Pageviews</th><th></th></tr></thead>
+      <tbody>
+      {{range .Imports}}
+      <tr>
+        <td>{{if eq .Source "plausible"}}Plausible{{else}}Umami{{end}}{{if not .Complete}} <small>(incomplete)</small>{{end}}</td>
+        <td>{{if .FirstDay}}{{.FirstDay}} – {{.LastDay}}{{else}}–{{end}}</td>
+        <td class="n">{{num .Visits}}</td><td class="n">{{num .Pageviews}}</td>
+        <td class="n"><form method="post" action="/sites/{{$.Site.ID}}/imports/{{.ID}}/delete" data-confirm="Delete this import and all the data it brought in?"><button class="danger">Delete</button></form></td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{else}}<p class="empty">Nothing imported yet.</p>{{end}}
+  </section>
+
+  <form method="post" action="/sites/{{.Site.ID}}/import" enctype="multipart/form-data" class="card form" data-import>
+    <h2>Import a file</h2>
+    <label for="format">From</label>
+    <select id="format" name="format" required>
+      <option value="plausible">Plausible: the ZIP from Site settings → Imports &amp; exports → Export</option>
+      <option value="umami">Umami: a CSV of raw events from its database</option>
+    </select>
+    <label for="file">File</label>
+    <input id="file" name="file" type="file" accept=".zip,.csv" required>
+    <small>Up to 1 GB. The <a href="https://github.com/yi00it/bonestats/blob/master/docs/IMPORT.md" rel="noopener">import guide</a> shows how to get the file, and how to import larger ones from the command line.</small>
+    <button type="submit">Import</button>
+  </form>
+
+  <section class="card">
+    <h2>How imports work</h2>
+    <ul>
+      <li>Only days before bonestats recorded its first visit to this site are imported, so no day is counted twice. Importing the same days again is refused.</li>
+      <li><b>Umami</b> data becomes regular visits: every card, filter and funnel works with it. Regions and Web Vitals aren't imported.</li>
+      <li><b>Plausible</b> exports daily totals, not single visits. They show up in the overview, chart, pages, sources, countries, devices, events and goals, but only while no filter is on. Regions, cities and properties aren't imported. Visitors are unique per day, so over several days a returning visitor counts once per day.</li>
+      {{if .Retention}}<li>Data older than {{.Retention}} days, imported or not, is deleted automatically. To keep older history, set <code>BONESTATS_RETENTION_DAYS=0</code> before importing.</li>{{end}}
+    </ul>
+  </section>
+  <footer>{{template "source"}}</footer>
+</main>
+{{end}}

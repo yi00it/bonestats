@@ -505,3 +505,24 @@ func clamp(v *float64, lo, hi float64) *float64 {
 	}
 	return v
 }
+
+// CleanPath, Referrer and ScreenBucket store paths, referrers and screen
+// sizes the way the collector does, for importers.
+func CleanPath(p string) string { return cleanPath(p) }
+
+func Referrer(ref, domain string) (host, hostPath string) { return referrer(ref, domain) }
+
+func ScreenBucket(width int) string { return screenBucket(width) }
+
+// VisitChannel returns the channel of a visit with the given referring host,
+// UTM tags and ad click ID parameter name, as the collector derives it.
+func VisitChannel(refHost, utmSource, utmMedium, clickID string) string {
+	src, med := limit(utmSource, 100), limit(utmMedium, 100)
+	if network := store.ClickIDs[clickID]; network != "" && med == "" {
+		med = "cpc"
+		if src == "" {
+			src = network
+		}
+	}
+	return store.Channel(refHost, src, med)
+}

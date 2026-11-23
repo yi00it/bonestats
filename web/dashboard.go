@@ -384,6 +384,13 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		d.check(err)
 	}
 
+	// Imported daily totals can't be filtered, so filtered views leave them out.
+	importedLeftOut := false
+	if len(q.Filters) > 0 {
+		importedLeftOut, err = st.HasImportedTotals(ctx, site.ID, from, to)
+		d.check(err)
+	}
+
 	current, err := st.CurrentVisitors(ctx, site.ID)
 	d.check(err)
 	vitals, err := st.VitalsSummary(ctx, q)
@@ -406,44 +413,45 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "dashboard", map[string]any{
-		"Title":       site.Domain,
-		"Nav":         n,
-		"Sites":       sites,
-		"Site":        site,
-		"Ranges":      ranges,
-		"Range":       qs.Get("range"),
-		"RangeLabel":  label,
-		"From":        from.Format(dateLayout),
-		"To":          to.AddDate(0, 0, -1).Format(dateLayout),
-		"Compare":     compare,
-		"Chips":       chips,
-		"Dimensions":  store.Dimensions,
-		"KPIs":        kpis,
-		"Current":     current,
-		"Chart":       template.JS(chartJSON), // json.Marshal escapes <, > and &
-		"Spark":       template.JS(sparkJSON),
-		"Map":         template.JS(mapJSON),
-		"Pages":       pages,
-		"Sources":     sources,
-		"Campaigns":   campaigns,
-		"Locations":   locations,
-		"Tech":        tech,
-		"Goals":       goalStats,
-		"HasRevenue":  hasRevenue,
-		"Events":      events,
-		"PropKey":     propKey,
-		"PropTabs":    propTabs,
-		"PropRows":    propRows,
-		"Currency":    currency,
-		"Funnel":      funnel,
-		"FunnelTabs":  funnelTabs,
-		"FunnelSteps": funnelSteps,
-		"Vitals":      vitals,
-		"VitalPages":  vitalPages,
-		"VitalInfo":   vitalInfo,
-		"GeoEnabled":  s.GeoEnabled,
-		"MultiDay":    to.Sub(from) > 24*time.Hour,
-		"ExportURL":   "/export?" + qs.Encode(),
+		"Title":           site.Domain,
+		"Nav":             n,
+		"Sites":           sites,
+		"Site":            site,
+		"Ranges":          ranges,
+		"Range":           qs.Get("range"),
+		"RangeLabel":      label,
+		"From":            from.Format(dateLayout),
+		"To":              to.AddDate(0, 0, -1).Format(dateLayout),
+		"Compare":         compare,
+		"Chips":           chips,
+		"Dimensions":      store.Dimensions,
+		"KPIs":            kpis,
+		"Current":         current,
+		"Chart":           template.JS(chartJSON), // json.Marshal escapes <, > and &
+		"Spark":           template.JS(sparkJSON),
+		"Map":             template.JS(mapJSON),
+		"Pages":           pages,
+		"Sources":         sources,
+		"Campaigns":       campaigns,
+		"Locations":       locations,
+		"Tech":            tech,
+		"Goals":           goalStats,
+		"HasRevenue":      hasRevenue,
+		"Events":          events,
+		"PropKey":         propKey,
+		"PropTabs":        propTabs,
+		"PropRows":        propRows,
+		"Currency":        currency,
+		"Funnel":          funnel,
+		"FunnelTabs":      funnelTabs,
+		"FunnelSteps":     funnelSteps,
+		"Vitals":          vitals,
+		"VitalPages":      vitalPages,
+		"VitalInfo":       vitalInfo,
+		"GeoEnabled":      s.GeoEnabled,
+		"MultiDay":        to.Sub(from) > 24*time.Hour,
+		"ExportURL":       "/export?" + qs.Encode(),
+		"ImportedLeftOut": importedLeftOut,
 	})
 }
 

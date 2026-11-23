@@ -95,7 +95,15 @@ type Query struct {
 	Location *time.Location
 	Filters  []Filter
 	Goals    []Goal // used to resolve goal filters
+
+	// noImported leaves imported totals out even without filters, for the
+	// baseline of a filtered view (see WithoutGoalFilters).
+	noImported bool
 }
+
+// withImported reports whether imported daily totals belong in the
+// results. They can't be filtered, so only unfiltered views include them.
+func (q Query) withImported() bool { return len(q.Filters) == 0 && !q.noImported }
 
 // WithoutGoalFilters returns q minus its goal filters (the baseline for
 // conversion rates).
@@ -106,6 +114,9 @@ func (q Query) WithoutGoalFilters() Query {
 			fs = append(fs, f)
 		}
 	}
+	// Conversion rates compare like with like: a goal-filtered view has no
+	// imported totals, so neither has its baseline.
+	q.noImported = q.noImported || len(q.Filters) > 0
 	q.Filters = fs
 	return q
 }

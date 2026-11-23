@@ -76,6 +76,10 @@ type Server struct {
 	// login, keys are looked up in Store.
 	AuthenticateAPI func(r *http.Request, key string) (*store.Store, bool)
 
+	// ImportDir holds uploads while they are imported; empty means the
+	// system's temporary directory.
+	ImportDir string
+
 	// Links are extra entries for the header navigation, such as the
 	// host's account page.
 	Links []Link
@@ -99,7 +103,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	s.tmpl = map[string]*template.Template{}
-	for _, page := range []string{"dashboard", "sites", "goals", "login"} {
+	for _, page := range []string{"dashboard", "sites", "goals", "imports", "login"} {
 		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }, "links": func() []Link { return s.Links }}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
@@ -136,6 +140,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /sites/{id}/funnels", form(s.auth(s.addFunnel)))
 	mux.Handle("POST /sites/{id}/funnels/{fid}/delete", form(s.auth(s.deleteFunnel)))
 	mux.Handle("GET /export", s.auth(s.export))
+	mux.Handle("GET /sites/{id}/import", s.auth(s.importsPage))
+	mux.Handle("POST /sites/{id}/import", csrf.Handler(s.auth(s.uploadImport)))
+	mux.Handle("POST /sites/{id}/imports/{iid}/delete", form(s.auth(s.deleteImport)))
 	if s.apiEnabled() {
 		mux.Handle("POST /api-keys", form(s.auth(s.addAPIKey)))
 		mux.Handle("POST /api-keys/{id}/delete", form(s.auth(s.deleteAPIKey)))
