@@ -33,7 +33,7 @@ nano .env                                 # set BONESTATS_DOMAIN and BONESTATS_P
 docker compose up -d
 ```
 
-This runs bonestats behind [Caddy](https://caddyserver.com), which gets an HTTPS certificate automatically, so open `https://<your domain>` and log in. The image (`ghcr.io/yi00it/bonestats`, amd64 and arm64) includes the DB-IP Lite country database, and the data lives in the `bonestats-data` volume. To update: `docker compose pull && docker compose up -d`. To back up (keep backups private, see below):
+This runs bonestats behind [Caddy](https://caddyserver.com), which gets an HTTPS certificate automatically, so open `https://<your domain>` and log in. The image (`ghcr.io/yi00it/bonestats`, amd64 and arm64) includes the DB-IP Lite country database, and the data lives in the `bonestats-data` volume. To update: `docker compose pull && docker compose up -d`. The compose network has IPv6 turned on so IPv6 visitors keep their real address; this needs Docker 27 or newer and IPv6 enabled in the host kernel. To back up (keep backups private, see below):
 
 ```sh
 docker compose stop bonestats && docker compose cp bonestats:/data/bonestats.db ./bonestats-backup.db && docker compose start bonestats
