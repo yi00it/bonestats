@@ -184,14 +184,14 @@ func (c *Collector) handle(ctx context.Context, r *http.Request, ip netip.Addr, 
 		if p.Engaged != nil && *p.Engaged >= 0 && *p.Engaged <= int64(store.SessionTimeout/time.Millisecond) {
 			engaged = p.Engaged
 		}
-		found, err := st.RecordLeave(ctx, store.Leave{
+		counts, err := st.RecordLeave(ctx, store.Leave{
 			SiteID: site.ID, Visitor: visitor, Time: now, Path: path, Scroll: scroll, Engaged: engaged,
 		})
 		if err != nil {
 			return err
 		}
-		// Vitals only count for a page load that was recorded as a visit.
-		if v := p.Vitals; v != nil && found {
+		// Vitals only count for a page load that belongs to a counted visit.
+		if v := p.Vitals; v != nil && counts {
 			return st.RecordVitals(ctx, store.Vitals{
 				SiteID: site.ID, Time: now, Path: path, Device: device,
 				LCP: clamp(v.LCP, 0, 120000), CLS: clamp(v.CLS, 0, 100), INP: clamp(v.INP, 0, 120000),

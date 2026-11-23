@@ -30,13 +30,15 @@ func TestBeaconSurvivesDisconnect(t *testing.T) {
 
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
-	r := httptest.NewRequest("POST", "/api/event", strings.NewReader(`{"d":"example.com","n":"pageview","p":"/","w":1200}`)).WithContext(gone)
-	r.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/131.0")
-	r.Header.Set("Origin", "https://example.com")
-	w := httptest.NewRecorder()
-	c.ServeHTTP(w, r)
-	if w.Code != 202 {
-		t.Fatalf("status = %d", w.Code)
+	for _, body := range []string{`{"d":"example.com","n":"pageview","p":"/","w":1200}`, `{"d":"example.com","n":"leave","p":"/","et":5000}`} {
+		r := httptest.NewRequest("POST", "/api/event", strings.NewReader(body)).WithContext(gone)
+		r.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/131.0")
+		r.Header.Set("Origin", "https://example.com")
+		w := httptest.NewRecorder()
+		c.ServeHTTP(w, r)
+		if w.Code != 202 {
+			t.Fatalf("status = %d", w.Code)
+		}
 	}
 
 	now := time.Now()
@@ -74,6 +76,8 @@ func TestFloodAndOrphanVitals(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		beacon(c, `{"d":"example.com","n":"pageview","p":"/","w":1200}`)
 	}
+	c.limiter = nil // let the leave beacon through, so the visit counts
+	beacon(c, `{"d":"example.com","n":"leave","p":"/","et":5000}`)
 
 	now := time.Now()
 	q := store.Query{SiteID: site.ID, From: now.Add(-time.Hour), To: now.Add(time.Hour)}
@@ -125,6 +129,8 @@ func TestBeaconsGoToTheSitesStore(t *testing.T) {
 	beacon(c, `{"d":"b.example","n":"pageview","p":"/b1"}`)
 	beacon(c, `{"d":"b.example","n":"pageview","p":"/b2"}`)
 	beacon(c, `{"d":"unknown.example","n":"pageview","p":"/"}`)
+	beacon(c, `{"d":"a.example","n":"leave","p":"/a","et":5000}`)
+	beacon(c, `{"d":"b.example","n":"leave","p":"/b2","et":5000}`)
 
 	now := time.Now()
 	for _, tc := range []struct {
@@ -162,11 +168,13 @@ func TestPrivacySignals(t *testing.T) {
 		c := &Collector{Store: st, Geo: geo, Location: time.UTC, IgnorePrivacySignals: ignore}
 
 		for _, h := range []string{"Sec-GPC", "DNT"} {
-			r := httptest.NewRequest("POST", "/api/event", strings.NewReader(`{"d":"example.com","n":"pageview","p":"/","w":1200}`))
-			r.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/131.0")
-			r.Header.Set(h, "1")
-			r.RemoteAddr = "203.0.113.9:5000"
-			c.ServeHTTP(httptest.NewRecorder(), r)
+			for _, body := range []string{`{"d":"example.com","n":"pageview","p":"/","w":1200}`, `{"d":"example.com","n":"leave","p":"/","et":5000}`} {
+				r := httptest.NewRequest("POST", "/api/event", strings.NewReader(body))
+				r.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/131.0")
+				r.Header.Set(h, "1")
+				r.RemoteAddr = "203.0.113.9:5000"
+				c.ServeHTTP(httptest.NewRecorder(), r)
+			}
 		}
 
 		now := time.Now()
@@ -182,5 +190,63 @@ func TestPrivacySignals(t *testing.T) {
 			t.Errorf("ignore=%v: pageviews = %d, want %d", ignore, sum.Pageviews, want)
 		}
 		st.Close()
+	}
+}
+
+// Visits whose pages were never visible for a second, as with bots that load
+// a page and leave, are hidden from the dashboard, and so are their vitals.
+func TestVisitsWithoutEngagementAreHidden(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.AddSite(ctx, "example.com")
+	site, _ := st.SiteByDomain(ctx, "example.com")
+	geo, _ := OpenGeo("")
+	c := &Collector{Store: st, Geo: geo, Location: time.UTC}
+
+	send := func(ip, body string) {
+		r := httptest.NewRequest("POST", "/api/event", strings.NewReader(body))
+		r.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/131.0")
+		r.RemoteAddr = ip + ":5000"
+		c.ServeHTTP(httptest.NewRecorder(), r)
+	}
+	// no leave beacon at all
+	send("203.0.113.1", `{"d":"example.com","n":"pageview","p":"/a","w":1200}`)
+	// gone in half a second
+	send("203.0.113.2", `{"d":"example.com","n":"pageview","p":"/b","w":1200}`)
+	send("203.0.113.2", `{"d":"example.com","n":"leave","p":"/b","et":500,"v":{"lcp":900}}`)
+	// a reader: two reports that add up to more than a second
+	send("203.0.113.3", `{"d":"example.com","n":"pageview","p":"/c","w":1200}`)
+	send("203.0.113.3", `{"d":"example.com","n":"leave","p":"/c","et":600}`)
+	send("203.0.113.3", `{"d":"example.com","n":"leave","p":"/c","et":600,"v":{"lcp":1200}}`)
+
+	now := time.Now()
+	q := store.Query{SiteID: site.ID, From: now.Add(-time.Hour), To: now.Add(time.Hour)}
+	sum, err := st.Summary(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Visitors != 1 || sum.Pageviews != 1 {
+		t.Errorf("visitors = %d, pageviews = %d, want 1/1", sum.Visitors, sum.Pageviews)
+	}
+	pages, err := st.Breakdown(ctx, q, "page", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0].Label != "/c" {
+		t.Errorf("pages = %+v, want only /c", pages)
+	}
+	if n, _ := st.CurrentVisitors(ctx, site.ID); n != 1 {
+		t.Errorf("current visitors = %d, want 1", n)
+	}
+	vitals, err := st.VitalsSummary(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := vitals["lcp"].Samples; n != 1 {
+		t.Errorf("lcp samples = %d, want 1", n)
 	}
 }

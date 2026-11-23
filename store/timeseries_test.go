@@ -32,9 +32,7 @@ func TestTimeseriesAcrossDST(t *testing.T) {
 		time.Date(2026, 10, 27, 0, 30, 0, 0, berlin),
 	}
 	for i, at := range visits {
-		if err := s.RecordEvent(ctx, Event{SiteID: site.ID, Time: at, Visitor: int64(i + 1), Name: "pageview", Path: "/"}); err != nil {
-			t.Fatal(err)
-		}
+		view(t, s, Event{SiteID: site.ID, Time: at, Visitor: int64(i + 1), Name: "pageview", Path: "/"})
 	}
 
 	from := time.Date(2026, 10, 18, 0, 0, 0, 0, berlin)

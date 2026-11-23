@@ -153,7 +153,7 @@ Per page load: Core Web Vitals (LCP, INP, CLS, FCP, TTFB). Visit duration and bo
 - **IP addresses are never stored.** They are used in memory for the country lookup (done locally, nothing leaves the server) and for the visitor hash.
 - Visitor hash = `sha256(daily_salt + domain + IP + User-Agent)`. The salt is random and **deleted within minutes after midnight** (in `BONESTATS_TZ`), overwritten on disk, so hashes can't be reversed or linked across days. As a result, someone who returns on another day counts as a new visitor. While a day's salt exists, someone holding the database could try to brute-force that day's hashes back to IP addresses, which is why the file is private.
 - **Global Privacy Control and Do Not Track are honored** in the script and again on the server, unless you set `BONESTATS_IGNORE_PRIVACY_SIGNALS=true`. Since nothing is stored on the device, no IP or lasting ID is kept and no data is sold or shared, you may decide that anonymous counting doesn't need these signals; Plausible and Fathom don't skip such visitors either. If you do, say so in your privacy policy.
-- Bots and automated browsers are filtered out.
+- Bots and automated browsers are filtered out. Known bot user agents are dropped on arrival. Bots that pose as a normal browser usually load a page and are gone before the browser reports any time on it, so a visit only shows on the dashboard once one of its pages has been visible for at least a second. The rest are kept in the database but never counted. A side effect: real visitors who leave within a second aren't counted either, and someone who is still reading appears in the live count only after their first interaction or when they leave the page.
 - Old data is deleted automatically (see retention).
 
 This is the same approach as Plausible and Fathom, which commonly run without a consent banner under GDPR/ePrivacy. It isn't legal advice: mention the analytics in your privacy policy, and check with a lawyer for your situation. Host the server in the EU to avoid transfer questions.
@@ -162,7 +162,7 @@ The DB-IP Lite data is licensed CC BY 4.0. The dashboard shows the required attr
 
 ## The tracking script
 
-`web/static/bs.js` is hand-minified to keep it tiny (about 1.9 KB raw, 1.2 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
+`web/static/bs.js` is hand-minified to keep it tiny (about 2.1 KB raw, 1.3 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
 
 1. Stops immediately (and makes `bonestats()` do nothing) if the visitor sends GPC or DNT (unless the server ignores them), if it's an automated browser, or if `localStorage.bonestats_ignore` is `"true"`.
 2. Sends a `pageview` beacon on load and on SPA navigations (`history.pushState`, `popstate`). The external referrer is only sent with the first one.
@@ -170,6 +170,7 @@ The DB-IP Lite data is licensed CC BY 4.0. The dashboard shows the required attr
 4. It tracks the deepest scroll position and the time the page was visible.
 5. It watches LCP, FCP, CLS (session windows), INP (about the 98th percentile of interactions) and TTFB with `PerformanceObserver`.
 6. When the page is hidden, or before an SPA navigation, it sends a `leave` beacon with the page's scroll depth and visible time. This also extends the visit duration. The first one also carries the vitals.
+7. On the visitor's first real click, tap, key press or mouse-wheel scroll after the page has been visible for a second, it sends one early `leave` beacon (without vitals). Mobile browsers often drop the beacon sent as the page closes, and this one makes sure the visit still counts.
 
 Beacon fields: `d` domain, `n` name, `p` path, `w` viewport width, `r` referrer, `source`/`medium`/`campaign`/`term`/`content` UTM tags, `pr` properties, `rv` revenue, `sd` scroll depth, `et` visible ms, `v` vitals. Beacons are sent with `navigator.sendBeacon` as plain text, which avoids CORS preflight requests.
 

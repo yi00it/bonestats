@@ -29,9 +29,7 @@ func TestSessionsAndSummary(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	pv := func(visitor int64, at time.Time, path string) {
 		t.Helper()
-		if err := s.RecordEvent(ctx, Event{SiteID: site.ID, Time: at, Visitor: visitor, Name: "pageview", Path: path}); err != nil {
-			t.Fatal(err)
-		}
+		view(t, s, Event{SiteID: site.ID, Time: at, Visitor: visitor, Name: "pageview", Path: path})
 	}
 	// Visitor 1: two pages in one visit, then returns after the timeout.
 	pv(1, t0, "/")
@@ -171,5 +169,59 @@ func TestPurgeSalts(t *testing.T) {
 	}
 	if again, _ := s.DailySalt(ctx, "2026-01-01"); string(again) == string(old) {
 		t.Error("purged salt came back")
+	}
+}
+
+// view records an event the way a browser does: a pageview is followed by a
+// leave beacon that reports time on the page, so the visit counts.
+func view(t *testing.T, s *Store, e Event) {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.RecordEvent(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "pageview" {
+		return
+	}
+	ms := MinEngaged.Milliseconds()
+	if _, err := s.RecordLeave(ctx, Leave{SiteID: e.SiteID, Visitor: e.Visitor, Time: e.Time, Path: e.Path, Engaged: &ms}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Upgrading a version 3 database counts the visits that already have a page
+// seen for MinEngaged and hides the rest.
+func TestMigrateV3(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddSite(ctx, "example.com")
+	site, _ := s.SiteByDomain(ctx, "example.com")
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	view(t, s, Event{SiteID: site.ID, Time: t0, Visitor: 1, Name: "pageview", Path: "/read"})
+	if err := s.RecordEvent(ctx, Event{SiteID: site.ID, Time: t0, Visitor: 2, Name: "pageview", Path: "/bot"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`ALTER TABLE sessions DROP COLUMN human`, `PRAGMA user_version = 3`} {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	sum, err := s.Summary(ctx, Query{SiteID: site.ID, From: t0.Add(-time.Hour), To: t0.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Visits != 1 || sum.Pageviews != 1 {
+		t.Errorf("visits = %d, pageviews = %d, want 1/1", sum.Visits, sum.Pageviews)
 	}
 }

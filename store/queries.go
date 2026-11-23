@@ -65,11 +65,12 @@ func (s *Store) Summary(ctx context.Context, q Query) (Summary, error) {
 	return sum, nil
 }
 
-// CurrentVisitors counts visitors seen in the last five minutes.
+// CurrentVisitors counts visitors seen in the last five minutes whose visit
+// counts.
 func (s *Store) CurrentVisitors(ctx context.Context, siteID int64) (int64, error) {
 	var n int64
 	err := s.rdb.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT visitor) FROM sessions WHERE site_id = ? AND last_seen >= ?`,
+		SELECT COUNT(DISTINCT visitor) FROM sessions WHERE site_id = ? AND last_seen >= ? AND human = 1`,
 		siteID, time.Now().Add(-5*time.Minute).Unix()).Scan(&n)
 	return n, err
 }

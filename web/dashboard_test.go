@@ -272,7 +272,16 @@ func addSite(t *testing.T, s *Server, domain string) store.Site {
 
 func record(t *testing.T, s *Server, e store.Event) {
 	t.Helper()
-	if err := s.Store.RecordEvent(context.Background(), e); err != nil {
+	ctx := context.Background()
+	if err := s.Store.RecordEvent(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "pageview" {
+		return
+	}
+	// the leave beacon a browser sends, so the visit counts
+	ms := store.MinEngaged.Milliseconds()
+	if _, err := s.Store.RecordLeave(ctx, store.Leave{SiteID: e.SiteID, Visitor: e.Visitor, Time: e.Time, Path: e.Path, Engaged: &ms}); err != nil {
 		t.Fatal(err)
 	}
 }

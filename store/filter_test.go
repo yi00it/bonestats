@@ -56,9 +56,7 @@ func fixture(t *testing.T) (*Store, Query) {
 		if rev != 0 {
 			e.Revenue = &rev
 		}
-		if err := s.RecordEvent(ctx, e); err != nil {
-			t.Fatal(err)
-		}
+		view(t, s, e)
 	}
 	google := Visit{Referrer: "google.com", Channel: "Organic Search", Country: "DE"}
 	rec(1, 0, "pageview", "/", google, nil, 0)
