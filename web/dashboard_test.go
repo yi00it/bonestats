@@ -452,6 +452,38 @@ func TestDashboard(t *testing.T) {
 
 // With Authenticate set, each user works in their own store and the
 // built-in password login is gone.
+// Conversions, Properties and Funnel only appear once the site uses them.
+func TestDashboardHidesUnusedCards(t *testing.T) {
+	s, get := dashboardClient(t)
+	ctx := context.Background()
+	site := addSite(t, s, "a.example")
+	record(t, s, store.Event{SiteID: site.ID, Time: time.Now().Add(-time.Minute), Visitor: 1, Name: "pageview", Path: "/"})
+
+	cards := []string{"<h2>Conversions</h2>", "<h2>Properties</h2>", "<h2>Funnel</h2>"}
+	body := get("/?site=a.example").Body.String()
+	for _, c := range cards {
+		if strings.Contains(body, c) {
+			t.Errorf("unused card %s shown", c)
+		}
+	}
+
+	if err := s.Store.AddGoal(ctx, store.Goal{SiteID: site.ID, EventName: "signup"}); err != nil {
+		t.Fatal(err)
+	}
+	goals, _ := s.Store.Goals(ctx, site.ID)
+	if err := s.Store.AddFunnel(ctx, store.Funnel{SiteID: site.ID, Name: "Signup", Steps: []int64{goals[0].ID, goals[0].ID}}); err != nil {
+		t.Fatal(err)
+	}
+	record(t, s, store.Event{SiteID: site.ID, Time: time.Now().Add(-time.Minute), Visitor: 1, Name: "signup", Path: "/",
+		Props: map[string]string{"plan": "pro"}})
+	body = get("/?site=a.example").Body.String()
+	for _, c := range cards {
+		if !strings.Contains(body, c) {
+			t.Errorf("card %s missing", c)
+		}
+	}
+}
+
 func TestAuthenticateSelectsStore(t *testing.T) {
 	open := func(name, domain string) *store.Store {
 		st, err := store.Open(filepath.Join(t.TempDir(), name))
