@@ -121,6 +121,7 @@ input:focus, select:focus { outline: 0; border-color: var(--led); box-shadow: 0 
     radial-gradient(circle at 9px calc(100% - 9px), var(--hair-2) 1.6px, transparent 2.2px),
     radial-gradient(circle at calc(100% - 9px) calc(100% - 9px), var(--hair-2) 1.6px, transparent 2.2px);
 }
+.notice { border: 1px solid var(--good); padding: 10px 14px; border-radius: 6px; font-size: 13.5px; }
 .error { color: var(--poor); border: 1px solid var(--poor); background: var(--led-soft); padding: 10px 14px; border-radius: 6px; font-size: 13.5px; }
 .empty { color: var(--muted); font: 12px/1.6 var(--mono); margin: 8px 0; }
 

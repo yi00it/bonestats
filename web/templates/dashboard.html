@@ -60,6 +60,7 @@
             </div>
           </details>
           {{if not .Chips}}<span class="hint">or click any row</span>{{end}}
+          {{if .ImportedLeftOut}}<span class="hint" title="Imported Plausible data holds daily totals, which can't be filtered">Imported totals are left out while filtering</span>{{end}}
         </div>
       </div>
     </form>

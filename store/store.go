@@ -29,7 +29,7 @@ const SessionTimeout = 30 * time.Minute
 // the browser reports any time on it; their visits are kept but never shown.
 const MinEngaged = time.Second
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Store uses two pools: db, the single writer, and rdb, read-only
 // connections for dashboard queries. With WAL, readers never block the
@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	device          TEXT NOT NULL DEFAULT '',
 	screen          TEXT NOT NULL DEFAULT '', -- width bucket
 	human           INTEGER NOT NULL DEFAULT 0, -- 1 once a page was visible for MinEngaged
-	engaged         INTEGER NOT NULL DEFAULT 0  -- visible time on all pages of the visit in ms
+	engaged         INTEGER NOT NULL DEFAULT 0, -- visible time on all pages of the visit in ms
+	import_id       INTEGER                     -- set for visits imported from another tool
 );
 CREATE INDEX IF NOT EXISTS sessions_visitor ON sessions(site_id, visitor, last_seen);
 CREATE INDEX IF NOT EXISTS sessions_site_started ON sessions(site_id, started_at);
@@ -157,6 +158,46 @@ CREATE TABLE IF NOT EXISTS logins (
 	token_hash BLOB PRIMARY KEY,
 	expires    INTEGER NOT NULL
 );
+
+-- Data imported from other analytics tools. complete is 0 while an import
+-- runs (or if it failed), so it can be deleted.
+CREATE TABLE IF NOT EXISTS imports (
+	id         INTEGER PRIMARY KEY,
+	site_id    INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	source     TEXT NOT NULL,             -- 'plausible' or 'umami'
+	first_day  TEXT NOT NULL DEFAULT '',  -- YYYY-MM-DD, inclusive
+	last_day   TEXT NOT NULL DEFAULT '',
+	visits     INTEGER NOT NULL DEFAULT 0,
+	pageviews  INTEGER NOT NULL DEFAULT 0,
+	complete   INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL
+);
+
+-- Daily totals imported from tools that only export aggregates (Plausible).
+-- dim '' holds the day's totals; other rows break the day down by a
+-- dashboard dimension. ts is noon of the day, so the day stays inside the
+-- same local calendar day in any timezone. These rows are added to
+-- unfiltered views only: they can't be filtered.
+CREATE TABLE IF NOT EXISTS imported (
+	import_id    INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+	site_id      INTEGER NOT NULL,
+	ts           INTEGER NOT NULL,
+	dim          TEXT NOT NULL,
+	value        TEXT NOT NULL,
+	hint         TEXT NOT NULL DEFAULT '',
+	visitors     INTEGER NOT NULL DEFAULT 0,
+	visits       INTEGER NOT NULL DEFAULT 0,
+	pageviews    INTEGER NOT NULL DEFAULT 0,
+	bounces      INTEGER NOT NULL DEFAULT 0,
+	duration     INTEGER NOT NULL DEFAULT 0, -- seconds, summed over visits
+	count        INTEGER NOT NULL DEFAULT 0, -- what the dimension counts (see Breakdown)
+	time_total   INTEGER NOT NULL DEFAULT 0, -- ms visible, pages only
+	time_n       INTEGER NOT NULL DEFAULT 0,
+	scroll_total INTEGER NOT NULL DEFAULT 0, -- percent, pages only
+	scroll_n     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS imported_site_dim_ts ON imported(site_id, dim, ts);
+CREATE INDEX IF NOT EXISTS imported_import ON imported(import_id);
 
 -- Keys for the stats API: sha256 of the key, so a leaked database can't be
 -- used to read the stats. prefix is the start of the key, to tell keys apart.
@@ -250,7 +291,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if version >= 1 && version < 6 {
+		if err := s.migrateV5(ctx); err != nil {
+			return err
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// Indexes on columns that a migration adds to older databases.
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS sessions_import ON sessions(import_id) WHERE import_id IS NOT NULL`); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
@@ -313,6 +363,20 @@ func (s *Store) migrateV1(ctx context.Context) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// migrateV5 adds sessions.import_id. A database that an older version opened
+// after this one has user_version 5 again but already has the column.
+func (s *Store) migrateV5(ctx context.Context) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'import_id'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN import_id INTEGER`)
+	return err
 }
 
 // migrateV3 adds sessions.human and sets it for the visits that already
@@ -492,7 +556,9 @@ func (s *Store) DeleteSite(ctx context.Context, id int64) error {
 // FirstVisit returns when the site's oldest counted visit started.
 func (s *Store) FirstVisit(ctx context.Context, siteID int64) (time.Time, bool) {
 	var ts sql.NullInt64
-	s.rdb.QueryRowContext(ctx, `SELECT MIN(started_at) FROM sessions WHERE site_id = ? AND human = 1`, siteID).Scan(&ts)
+	s.rdb.QueryRowContext(ctx, `SELECT MIN(t) FROM (
+		SELECT MIN(started_at) AS t FROM sessions WHERE site_id = ? AND human = 1
+		UNION ALL SELECT MIN(ts) - 12*3600 FROM imported WHERE site_id = ? AND dim = '')`, siteID, siteID).Scan(&ts)
 	return time.Unix(ts.Int64, 0), ts.Valid
 }
 
@@ -940,6 +1006,9 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
 		return n, err
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM vitals WHERE ts < ?`, cut); err != nil {
+		return n, err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM imported WHERE ts < ?`, cut); err != nil {
 		return n, err
 	}
 	return n, nil

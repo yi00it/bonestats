@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/yi00it/bonestats/collect"
 	"github.com/yi00it/bonestats/demo"
+	"github.com/yi00it/bonestats/importer"
 	"github.com/yi00it/bonestats/store"
 	"github.com/yi00it/bonestats/web"
 )
@@ -35,6 +37,10 @@ func env(key, def string) string {
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "demo" {
 		runDemo(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "import" {
+		runImport(os.Args[2:])
 		return
 	}
 	retentionDefault, err := strconv.Atoi(env("BONESTATS_RETENTION_DAYS", "365"))
@@ -119,6 +125,7 @@ func main() {
 		GeoEnabled:  geo.Enabled(),
 		Collector:   collector,
 		SourceURL:   *sourceURL,
+		ImportDir:   filepath.Dir(*dbPath),
 
 		IgnorePrivacySignals: *ignoreSignals,
 	}
@@ -247,4 +254,51 @@ func runDemo(args []string) {
 		log.Fatalf("demo: %v (if the site already exists, pass -replace or another -site)", err)
 	}
 	log.Printf("done in %s: %d visits, %d pageviews, %d custom events", time.Since(start).Round(time.Millisecond), res.Visits, res.Pageviews, res.Events)
+}
+
+// runImport implements "bonestats import": it imports data exported from
+// another analytics tool into a site. See docs/IMPORT.md.
+func runImport(args []string) {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	dbPath := fs.String("db", env("BONESTATS_DB", "bonestats.db"), "SQLite database file")
+	domain := fs.String("site", "", "domain of the site to import into (it must exist)")
+	format := fs.String("from", "", "where the file comes from: "+strings.Join(importer.Formats, " or "))
+	tz := fs.String("tz", env("BONESTATS_TZ", "Local"), "timezone of the dashboard (BONESTATS_TZ)")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: bonestats import -site example.com -from plausible|umami FILE")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+	if fs.NArg() != 1 || *domain == "" || *format == "" {
+		fs.Usage()
+		os.Exit(2)
+	}
+	loc, err := time.LoadLocation(*tz)
+	if err != nil {
+		log.Fatalf("timezone: %v", err)
+	}
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	defer st.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	site, err := st.SiteByDomain(ctx, store.NormalizeDomain(*domain))
+	if err != nil {
+		log.Fatalf("no site %s: add it on the Sites page first", *domain)
+	}
+	start := time.Now()
+	res, err := importer.Run(ctx, st, site, *format, fs.Arg(0), loc)
+	if err != nil {
+		log.Fatalf("nothing was imported: %v", err)
+	}
+	log.Printf("imported %d visits and %d pageviews from %s to %s in %s", res.Import.Visits, res.Import.Pageviews,
+		res.Import.FirstDay, res.Import.LastDay, time.Since(start).Round(time.Millisecond))
+	if res.Skipped > 0 {
+		log.Printf("skipped %d rows from days that bonestats recorded itself", res.Skipped)
+	}
+	if days := env("BONESTATS_RETENTION_DAYS", "365"); days != "0" {
+		log.Printf("note: data older than %s days is deleted by the retention setting (BONESTATS_RETENTION_DAYS)", days)
+	}
 }

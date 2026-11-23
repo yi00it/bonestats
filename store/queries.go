@@ -46,9 +46,9 @@ func (s *Store) Summary(ctx context.Context, q Query) (Summary, error) {
 	var sum Summary
 	from, args := q.sessionScope()
 	var bounces int64
-	var dur sql.NullFloat64
+	var dur float64 // seconds, summed over visits
 	err := s.rdb.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0), AVG(s.engaged) / 1000 `+from,
+		SELECT COUNT(DISTINCT s.visitor), COUNT(*), COALESCE(SUM(s.pageviews = 1), 0), COALESCE(SUM(s.engaged), 0) / 1000.0 `+from,
 		args...).Scan(&sum.Visitors, &sum.Visits, &bounces, &dur)
 	if err != nil {
 		return sum, err
@@ -57,11 +57,24 @@ func (s *Store) Summary(ctx context.Context, q Query) (Summary, error) {
 	if err := s.rdb.QueryRowContext(ctx, `SELECT COUNT(*) `+from+` AND e.name = 'pageview'`, args...).Scan(&sum.Pageviews); err != nil {
 		return sum, err
 	}
+	if q.withImported() {
+		var v, n, pv, b, d int64
+		if err := s.rdb.QueryRowContext(ctx, `SELECT COALESCE(SUM(visitors), 0), COALESCE(SUM(visits), 0), COALESCE(SUM(pageviews), 0),
+			COALESCE(SUM(bounces), 0), COALESCE(SUM(duration), 0) FROM imported WHERE site_id = ? AND dim = '' AND ts >= ? AND ts < ?`,
+			q.SiteID, q.From.Unix(), q.To.Unix()).Scan(&v, &n, &pv, &b, &d); err != nil {
+			return sum, err
+		}
+		sum.Visitors += v
+		sum.Visits += n
+		sum.Pageviews += pv
+		bounces += b
+		dur += float64(d)
+	}
 	if sum.Visits > 0 {
 		sum.BounceRate = float64(bounces) * 100 / float64(sum.Visits)
 		sum.ViewsPerVisit = float64(sum.Pageviews) / float64(sum.Visits)
+		sum.AvgDuration = time.Duration(dur/float64(sum.Visits)) * time.Second
 	}
-	sum.AvgDuration = time.Duration(dur.Float64) * time.Second
 	return sum, nil
 }
 
@@ -192,6 +205,32 @@ func (s *Store) Timeseries(ctx context.Context, q Query, iv Interval) (Series, e
 		return Series{}, err
 	}
 
+	if q.withImported() {
+		rows, err = s.rdb.QueryContext(ctx, bucketTable+`SELECT b.k, SUM(i.visitors), SUM(i.visits), SUM(i.bounces), SUM(i.duration), SUM(i.pageviews)
+			FROM b CROSS JOIN imported i WHERE i.ts >= b.lo AND i.ts < b.hi AND i.site_id = ? AND i.dim = '' GROUP BY b.k`, ranges, q.SiteID)
+		if err != nil {
+			return Series{}, err
+		}
+		for rows.Next() {
+			var k int
+			var a agg
+			if err := rows.Scan(&k, &a.visitors, &a.visits, &a.bounces, &a.dur, &a.pageviews); err != nil {
+				rows.Close()
+				return Series{}, err
+			}
+			g := &got[k]
+			g.visitors += a.visitors
+			g.visits += a.visits
+			g.bounces += a.bounces
+			g.dur += a.dur
+			g.pageviews += a.pageviews
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return Series{}, err
+		}
+	}
+
 	ratio := func(x, y float64) float64 {
 		if y == 0 {
 			return 0
@@ -253,51 +292,48 @@ func (s *Store) Breakdown(ctx context.Context, q Query, dim string, limit int) (
 }
 
 func (s *Store) breakdown(ctx context.Context, q Query, dim string, limit int) ([]Row, error) {
+	// Every query yields label, hint, visitors, count and the sums and
+	// counts behind time on page and scroll depth, so imported totals can be
+	// added with UNION ALL.
+	var native string
+	var args []any
+	order := "3 DESC, 4 DESC" // by visitors
 	if dim == "page" {
-		from, args := q.eventScope()
-		rs, err := s.rdb.QueryContext(ctx, `
-			SELECT e.path, COUNT(DISTINCT e.visitor), COUNT(*), AVG(e.engaged), AVG(e.scroll) `+from+`
-			AND e.name = 'pageview' GROUP BY e.path ORDER BY 3 DESC, 2 DESC LIMIT ?`, append(args, limit)...)
-		if err != nil {
-			return nil, err
+		from, a := q.eventScope()
+		native = `SELECT e.path AS c1, '' AS c2, COUNT(DISTINCT e.visitor) AS c3, COUNT(*) AS c4,
+			SUM(e.engaged) AS c5, COUNT(e.engaged) AS c6, SUM(e.scroll) AS c7, COUNT(e.scroll) AS c8 ` +
+			from + ` AND e.name = 'pageview' GROUP BY e.path`
+		args = a
+		order = "4 DESC, 3 DESC" // by pageviews
+	} else {
+		d, ok := DimensionByKey(dim)
+		if !ok || d.Col == "" {
+			return nil, fmt.Errorf("invalid breakdown dimension %q", dim)
 		}
-		defer rs.Close()
-		var out []Row
-		for rs.Next() {
-			var r Row
-			var engaged, scroll sql.NullFloat64
-			if err := rs.Scan(&r.Label, &r.Visitors, &r.Count, &engaged, &scroll); err != nil {
-				return nil, err
-			}
-			if engaged.Valid {
-				d := time.Duration(engaged.Float64) * time.Millisecond
-				r.TimeOnPage = &d
-			}
-			if scroll.Valid {
-				r.Scroll = &scroll.Float64
-			}
-			out = append(out, r)
+		hint := "''"
+		if dim == "region" || dim == "city" {
+			hint = "MAX(s.country)"
 		}
-		return withPercent(out), rs.Err()
+		// Every visit has a source: one without a referrer is direct.
+		label, known := "s."+d.Col, " AND s."+d.Col+" <> ''"
+		if dim == "source" {
+			label, known = "CASE WHEN s.referrer = '' THEN '"+DirectSource+"' ELSE s.referrer END", ""
+		}
+		from, a := q.sessionScope()
+		native = fmt.Sprintf(`SELECT %s AS c1, %s AS c2, COUNT(DISTINCT s.visitor) AS c3, COUNT(*) AS c4, 0 AS c5, 0 AS c6, 0 AS c7, 0 AS c8
+			%s%s GROUP BY 1`, label, hint, from, known)
+		args = a
 	}
-
-	d, ok := DimensionByKey(dim)
-	if !ok || d.Col == "" {
-		return nil, fmt.Errorf("invalid breakdown dimension %q", dim)
+	query := native
+	if q.withImported() {
+		query = `SELECT c1, MAX(c2), SUM(c3), SUM(c4), SUM(c5), SUM(c6), SUM(c7), SUM(c8) FROM (
+			SELECT * FROM (` + native + `)
+			UNION ALL
+			SELECT value, MAX(hint), SUM(visitors), SUM(count), SUM(time_total), SUM(time_n), SUM(scroll_total), SUM(scroll_n)
+			FROM imported WHERE site_id = ? AND dim = ? AND ts >= ? AND ts < ? AND value <> '' GROUP BY value) GROUP BY 1`
+		args = append(args, q.SiteID, dim, q.From.Unix(), q.To.Unix())
 	}
-	hint := "''"
-	if dim == "region" || dim == "city" {
-		hint = "MAX(s.country)"
-	}
-	// Every visit has a source: one without a referrer is direct.
-	label, known := "s."+d.Col, " AND s."+d.Col+" <> ''"
-	if dim == "source" {
-		label, known = "CASE WHEN s.referrer = '' THEN '"+DirectSource+"' ELSE s.referrer END", ""
-	}
-	from, args := q.sessionScope()
-	rs, err := s.rdb.QueryContext(ctx, fmt.Sprintf(`
-		SELECT %[1]s, %[2]s, COUNT(DISTINCT s.visitor), COUNT(*) %[3]s%[4]s
-		GROUP BY 1 ORDER BY 3 DESC, 4 DESC LIMIT ?`, label, hint, from, known), append(args, limit)...)
+	rs, err := s.rdb.QueryContext(ctx, query+` ORDER BY `+order+` LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -305,8 +341,19 @@ func (s *Store) breakdown(ctx context.Context, q Query, dim string, limit int) (
 	var out []Row
 	for rs.Next() {
 		var r Row
-		if err := rs.Scan(&r.Label, &r.Hint, &r.Visitors, &r.Count); err != nil {
+		var timeSum, timeN, scrollSum, scrollN sql.NullFloat64
+		if err := rs.Scan(&r.Label, &r.Hint, &r.Visitors, &r.Count, &timeSum, &timeN, &scrollSum, &scrollN); err != nil {
 			return nil, err
+		}
+		if dim == "page" {
+			if timeN.Float64 > 0 {
+				d := time.Duration(timeSum.Float64/timeN.Float64) * time.Millisecond
+				r.TimeOnPage = &d
+			}
+			if scrollN.Float64 > 0 {
+				sc := scrollSum.Float64 / scrollN.Float64
+				r.Scroll = &sc
+			}
 		}
 		out = append(out, r)
 	}
@@ -360,6 +407,22 @@ func (s *Store) GoalStats(ctx context.Context, q Query) ([]GoalStat, error) {
 		if base.Visitors > 0 {
 			st.CR = float64(st.Visitors) * 100 / float64(base.Visitors)
 		}
+		if q.withImported() {
+			dim, cond, arg := "event", "value = ?", any(g.EventName)
+			if g.PagePath != "" {
+				dim, cond, arg = "page", "value GLOB ?", any(globPattern(g.PagePath))
+			}
+			var v, n int64
+			if err := s.rdb.QueryRowContext(ctx, `SELECT COALESCE(SUM(visitors), 0), COALESCE(SUM(count), 0) FROM imported
+				WHERE site_id = ? AND dim = ? AND ts >= ? AND ts < ? AND `+cond, q.SiteID, dim, q.From.Unix(), q.To.Unix(), arg).Scan(&v, &n); err != nil {
+				return nil, err
+			}
+			st.Visitors += v
+			st.Count += n
+			if base.Visitors > 0 {
+				st.CR = float64(st.Visitors) * 100 / float64(base.Visitors)
+			}
+		}
 		st.Revenue = rev.Float64
 		if st.Count > 0 {
 			st.AvgRevenue = st.Revenue / float64(st.Count)
@@ -382,8 +445,14 @@ func (s *Store) GoalStats(ctx context.Context, q Query) ([]GoalStat, error) {
 // CustomEvents lists all custom events, configured as goals or not.
 func (s *Store) CustomEvents(ctx context.Context, q Query, limit int) ([]Row, error) {
 	from, args := q.eventScope()
-	return s.rows(ctx, `SELECT e.name, COUNT(DISTINCT e.visitor), COUNT(*) `+from+`
-		AND e.name <> 'pageview' GROUP BY e.name ORDER BY 3 DESC LIMIT ?`, append(args, limit)...)
+	query := `SELECT e.name AS c1, COUNT(DISTINCT e.visitor) AS c2, COUNT(*) AS c3 ` + from + ` AND e.name <> 'pageview' GROUP BY e.name`
+	if q.withImported() {
+		query = `SELECT c1, SUM(c2), SUM(c3) FROM (SELECT * FROM (` + query + `)
+			UNION ALL SELECT value, SUM(visitors), SUM(count) FROM imported
+			WHERE site_id = ? AND dim = 'event' AND ts >= ? AND ts < ? GROUP BY value) GROUP BY 1`
+		args = append(args, q.SiteID, q.From.Unix(), q.To.Unix())
+	}
+	return s.rows(ctx, query+` ORDER BY 3 DESC LIMIT ?`, append(args, limit)...)
 }
 
 // propScope restricts property queries to the filtered goal's events.
