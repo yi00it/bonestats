@@ -291,6 +291,7 @@ func visit(ctx context.Context, st *store.Store, r *rand.Rand, siteID int64, t, 
 		}
 	}
 	v.Channel = store.Channel(v.Referrer, v.UTMSource, v.UTMMedium)
+	v.Referrer = store.Source(v.Referrer, v.UTMSource)
 
 	visitor := r.Int64()
 	pages := 1
@@ -373,13 +374,13 @@ func visit(ctx context.Context, st *store.Store, r *rand.Rand, siteID int64, t, 
 		}
 		scroll := int64(math.Min(100, math.Max(10, lognormal(r, scrollMedian(path), 0.35))))
 		engaged := int64(float64(stay.Milliseconds()) * (0.6 + 0.4*r.Float64()))
-		if _, err := st.RecordLeave(ctx, store.Leave{SiteID: siteID, Visitor: visitor, Time: t, Path: path, Scroll: &scroll, Engaged: &engaged}); err != nil {
-			return err
-		}
+		leave := store.Leave{SiteID: siteID, Visitor: visitor, Time: t, Path: path, Scroll: &scroll, Engaged: &engaged}
 		if r.Float64() < 0.75 { // not every browser reports vitals
-			if err := st.RecordVitals(ctx, vitals(r, siteID, t, path, device)); err != nil {
-				return err
-			}
+			v := vitals(r, siteID, t, path, device)
+			leave.Vitals = &v
+		}
+		if _, err := st.RecordLeave(ctx, leave); err != nil {
+			return err
 		}
 		if path == "/pricing" && r.Float64() < 0.35 {
 			path = "/signup"

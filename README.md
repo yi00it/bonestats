@@ -7,7 +7,7 @@
 
 <p align="center">
   A tiny, cookieless, self-hosted web analytics server.<br>
-  One Go binary, one SQLite file, a 1.2 KB tracking script.
+  One Go binary, one SQLite file, a 1.5 KB tracking script.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 ![The bonestats dashboard in light mode](docs/dashboard.png)
 
-bonestats runs as a single Go binary with one SQLite file. Its tracking script is about 1.2 KB gzipped, smaller than Plausible's, and also measures Core Web Vitals, scroll depth and time on page. The dashboard looks like an instrument panel: dot-matrix display type, LED-style meters and a single signal-red accent, in a light and a dark theme.
+bonestats runs as a single Go binary with one SQLite file. Its tracking script is about 1.5 KB gzipped, smaller than Plausible's, and also measures Core Web Vitals, scroll depth and time on page. The dashboard looks like an instrument panel: dot-matrix display type, LED-style meters and a single signal-red accent, in a light and a dark theme.
 
 ## Install with Docker
 
@@ -75,13 +75,13 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 - **Date ranges:** today, yesterday, 7/28/30/91 days, month to date, last month, year to date, 12 months, all time and custom.
 - **Filters:** click any row (a page, source, country, browser…) to filter the whole dashboard, or use **+ Filter** for "is", "is not" and "contains". Filters live in the URL, so every view can be bookmarked.
 - **Pages:** top pages (with time on page and scroll depth), entry pages and exit pages.
-- **Sources:** channels (Organic Search, Social, Email, Paid…), source domains, referrer URLs (host and path, never the query string), and UTM source, medium, campaign, term and content.
+- **Sources:** channels (Organic Search, Social, Email, Paid, AI…), sources (well-known sites by name, so `google.com` and `google.com.tr` are both Google; visits without one are listed as Direct / None), referrer URLs (host and path, never the query string), and UTM source, medium, campaign, term and content.
 - **Locations:** world map, countries, regions and cities.
 - **Devices:** browser, browser version, OS, OS version, device type and screen size (all major versions and size ranges only).
 - **Goals** (set them up on Sites → Goals & funnels): custom event goals, pageview goals with `*` wildcards, conversion rate and revenue. With a goal filter on, every breakdown shows a CR column.
 - **Properties** of custom events, broken down by value (and revenue).
 - **Funnels:** 2 to 8 goals that visitors must complete in order within one visit, with the drop-off at each step.
-- **Web performance:** the 75th percentile of LCP, INP, CLS, FCP and TTFB from real visitors, rated good, needs improvement or poor, overall and per page.
+- **Web performance:** the 75th percentile of LCP, INP, CLS, FCP and TTFB from real visitors, rated good, needs improvement or poor, overall and per page. It follows the dashboard's filters.
 - **Live:** the dashboard refreshes every 15 seconds while it's open and shows how many visitors are online. Numbers that changed flicker to their new value; open tabs and your scroll position are kept.
 - **Light and dark:** follows your system setting, or pick one with the switch in the header (remembered in your browser).
 
@@ -142,18 +142,18 @@ The admin login only works over HTTPS (or on `localhost`), and the cookie is the
 
 ## What is collected
 
-Per visit: referrer host and path (no query string), channel, UTM source/medium/campaign/term/content, browser and OS family plus major version, device class and screen-size range (from viewport width), country/region/city, and a visitor hash.
-Per pageview: path (no query string), scroll depth and visible time. Path segments that look like personal data or secrets are replaced before storing: email addresses become `[email]`, and UUIDs, long hex IDs and mixed-case tokens (as in `/reset/<token>`) become `[id]`, in page paths and referrer paths alike. This is a best-effort guard, so still avoid personal data in your URLs.
+Per visit: source (the referrer's host or name) and referrer path (no query string), channel, UTM source/medium/campaign/term/content, browser and OS family plus major version, device class (from the user agent), screen-size range (from viewport width), country/region/city, and a visitor hash. The script also reports whether the URL carries an ad click ID (`gclid`, `msclkid` and the like; only its name, never its value) and how many touch points the screen has, to tell an iPad from a Mac; both are used to classify the visit and not stored.
+Per pageview: path (no query string, percent-decoded so `/yaz%C4%B1l%C4%B1m` reads `/yazılım`), scroll depth and visible time. Path segments that look like personal data or secrets are replaced before storing: email addresses become `[email]`, and UUIDs, long hex IDs and mixed-case tokens (as in `/reset/<token>`) become `[id]`, in page paths and referrer paths alike. Readable slugs such as `/iPhone-17-Pro-review` are kept. This is a best-effort guard, so still avoid personal data in your URLs.
 Per custom event: name, up to 10 short properties, and an optional revenue amount.
-Per page load: Core Web Vitals (LCP, INP, CLS, FCP, TTFB). Visit duration and bounce rate come from a 30-minute session window.
+Per page load: Core Web Vitals (LCP, INP, CLS, FCP, TTFB). A visit ends after 30 minutes without a beacon. Visit duration is the time the visit's pages were actually visible, so a tab left in the background doesn't add to it; a bounce is a visit with one pageview.
 
 ## Privacy design
 
 - **No cookies or storage** on visitors' devices, and no fingerprinting.
 - **IP addresses are never stored.** They are used in memory for the country lookup (done locally, nothing leaves the server) and for the visitor hash.
-- Visitor hash = `sha256(daily_salt + domain + IP + User-Agent)`. The salt is random and **deleted within minutes after midnight** (in `BONESTATS_TZ`), overwritten on disk, so hashes can't be reversed or linked across days. As a result, someone who returns on another day counts as a new visitor. While a day's salt exists, someone holding the database could try to brute-force that day's hashes back to IP addresses, which is why the file is private.
+- Visitor hash = `sha256(daily_salt + domain + IP + User-Agent)`; of an IPv6 address only the /64 network is used, since devices keep changing the rest. The salt is random and **deleted from the database within minutes after midnight** (in `BONESTATS_TZ`), overwritten on disk, so hashes can't be reversed or linked across days. The running server keeps it in memory for another 30 minutes, only so that a visit in progress at midnight isn't counted as a second visitor; a restart drops it. As a result, someone who returns on another day counts as a new visitor. While a day's salt exists, someone holding the database could try to brute-force that day's hashes back to IP addresses, which is why the file is private.
 - **Global Privacy Control and Do Not Track are honored** in the script and again on the server, unless you set `BONESTATS_IGNORE_PRIVACY_SIGNALS=true`. Since nothing is stored on the device, no IP or lasting ID is kept and no data is sold or shared, you may decide that anonymous counting doesn't need these signals; Plausible and Fathom don't skip such visitors either. If you do, say so in your privacy policy.
-- Bots and automated browsers are filtered out. Known bot user agents are dropped on arrival. Bots that pose as a normal browser usually load a page and are gone before the browser reports any time on it, so a visit only shows on the dashboard once one of its pages has been visible for at least a second. The rest are kept in the database but never counted. A side effect: real visitors who leave within a second aren't counted either, and someone who is still reading appears in the live count only after their first interaction or when they leave the page.
+- Bots and automated browsers are filtered out. Known bot user agents are dropped on arrival. Bots that pose as a normal browser usually load a page and are gone before the browser reports any time on it, so a visit only shows on the dashboard once one of its pages has been visible for at least a second. The rest are kept in the database but never counted. A side effect: real visitors who leave within a second aren't counted either, and someone who is still reading appears in the live count only after their first interaction or when they leave the page, and drops out of it after five minutes without scrolling, clicking or typing.
 - Old data is deleted automatically (see retention).
 
 This is the same approach as Plausible and Fathom, which commonly run without a consent banner under GDPR/ePrivacy. It isn't legal advice: mention the analytics in your privacy policy, and check with a lawyer for your situation. Host the server in the EU to avoid transfer questions.
@@ -162,17 +162,18 @@ The DB-IP Lite data is licensed CC BY 4.0. The dashboard shows the required attr
 
 ## The tracking script
 
-`web/static/bs.js` is hand-minified to keep it tiny (about 2.1 KB raw, 1.3 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
+`web/static/bs.js` is hand-minified to keep it tiny (about 2.6 KB raw, 1.5 KB gzipped). The add-ons in `static/ext/` are appended to it when requested by file name. The server builds and gzips every combination at startup and serves them with an ETag. Here's what the script does:
 
 1. Stops immediately (and makes `bonestats()` do nothing) if the visitor sends GPC or DNT (unless the server ignores them), if it's an automated browser, or if `localStorage.bonestats_ignore` is `"true"`.
-2. Sends a `pageview` beacon on load and on SPA navigations (`history.pushState`, `popstate`). The external referrer is only sent with the first one.
+2. Sends a `pageview` beacon on load, on SPA navigations (`history.pushState`, `history.replaceState` and `popstate`, when the path changes) and when the browser brings the page back from its back/forward cache. A page the browser prerenders sends nothing until it is actually shown. The external referrer is only sent with the first one.
 3. `bonestats(name, props, revenue)` sends a custom event, and calls queued before the script loaded are replayed.
-4. It tracks the deepest scroll position and the time the page was visible.
+4. It tracks the deepest scroll position, reported as a share of the page's height at the time of each report, and the time the page was visible.
 5. It watches LCP, FCP, CLS (session windows), INP (about the 98th percentile of interactions) and TTFB with `PerformanceObserver`.
-6. When the page is hidden, or before an SPA navigation, it sends a `leave` beacon with the page's scroll depth and visible time. This also extends the visit duration. The first one also carries the vitals.
+6. When the page is hidden or unloaded, or before an SPA navigation, it sends a `leave` beacon with the page's scroll depth and visible time. Until the first SPA navigation it also carries the vitals measured so far; the server keeps one set per page load.
 7. On the visitor's first real click, tap, key press or mouse-wheel scroll after the page has been visible for a second, it sends one early `leave` beacon (without vitals). Mobile browsers often drop the beacon sent as the page closes, and this one makes sure the visit still counts.
+8. While the page stays visible and the visitor keeps scrolling, clicking or typing, it sends further `leave` beacons (without vitals) after 15 seconds, then at doubling intervals up to every 4 minutes. A long read is then measured even if the last beacon is lost, and keeps its visit open.
 
-Beacon fields: `d` domain, `n` name, `p` path, `w` viewport width, `r` referrer, `source`/`medium`/`campaign`/`term`/`content` UTM tags, `pr` properties, `rv` revenue, `sd` scroll depth, `et` visible ms, `v` vitals. Beacons are sent with `navigator.sendBeacon` as plain text, which avoids CORS preflight requests.
+Beacon fields: `d` domain, `n` name, `p` path, `w` viewport width, `t` touch points, `r` referrer, `c` name of an ad click ID in the URL, `source`/`medium`/`campaign`/`term`/`content` UTM tags, `pr` properties, `rv` revenue, `sd` scroll depth, `et` visible ms, `v` vitals. Beacons are sent with `navigator.sendBeacon` as plain text, which avoids CORS preflight requests.
 
 ## Layout
 

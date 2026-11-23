@@ -191,8 +191,12 @@ func (q Query) conds(eventScope bool) (string, []any) {
 		sb.WriteString(" AND ")
 		switch {
 		case d.Col != "":
+			v := f.Value
+			if f.Dim == "source" && v == DirectSource && f.Op != OpContains {
+				v = "" // a direct visit has no source
+			}
 			sb.WriteString(opCond("s."+d.Col, f.Op))
-			args = append(args, f.Value)
+			args = append(args, v)
 		case f.Dim == "page" && eventScope && f.Op != OpIsNot:
 			// only the matching pageviews; "is not" stays per visit (below)
 			// so it means "visits that never saw the page"
