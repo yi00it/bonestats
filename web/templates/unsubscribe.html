@@ -1,0 +1,19 @@
+{{define "content"}}
+<main class="login">
+  <form method="post" class="card">
+    <h1 class="logo">{{template "mark"}}<span class="wordmark">bonestats</span></h1>
+    {{if not .Found}}
+    <p class="tagline">Unsubscribed</p>
+    <p class="message">You don't get these reports anymore.</p>
+    {{else if .Done}}
+    <p class="tagline">{{.Report.Domain}}</p>
+    <p class="message">Unsubscribed. {{.Report.Email}} won't get {{.Report.Period}} reports for {{.Report.Domain}} anymore.</p>
+    {{else}}
+    <p class="tagline">{{.Report.Domain}}</p>
+    <p class="message">Stop sending {{.Report.Period}} reports for {{.Report.Domain}} to {{.Report.Email}}?</p>
+    <button type="submit">Unsubscribe</button>
+    {{end}}
+  </form>
+  <footer>{{template "source"}}</footer>
+</main>
+{{end}}

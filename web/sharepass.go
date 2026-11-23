@@ -90,8 +90,7 @@ func shareUnlocked(r *http.Request, st *store.Store, sh store.Share) (bool, erro
 
 func (s *Server) renderSharePassword(w http.ResponseWriter, sh store.Share, site store.Site, status int, msg string) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	w.WriteHeader(status)
-	s.render(w, "login", map[string]any{
+	s.renderStatus(w, status, "login", map[string]any{
 		"Title":   site.Domain,
 		"Action":  shareCookiePath(sh),
 		"Tagline": site.Domain,

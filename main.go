@@ -23,6 +23,7 @@ import (
 	"github.com/yi00it/bonestats/collect"
 	"github.com/yi00it/bonestats/demo"
 	"github.com/yi00it/bonestats/importer"
+	"github.com/yi00it/bonestats/report"
 	"github.com/yi00it/bonestats/store"
 	"github.com/yi00it/bonestats/web"
 )
@@ -64,6 +65,8 @@ func main() {
 		eventRate     = flag.Int("event-rate", eventRateDefault, "beacons per minute accepted from one IP (0 = unlimited)")
 		passwordFile  = flag.String("password-file", env("BONESTATS_PASSWORD_FILE", ""), "file holding the admin password, instead of BONESTATS_PASSWORD")
 		ignoreSignals = flag.Bool("ignore-privacy-signals", boolEnv("BONESTATS_IGNORE_PRIVACY_SIGNALS"), "count visitors who send Global Privacy Control or Do Not Track")
+		smtpURL       = flag.String("smtp-url", env("BONESTATS_SMTP_URL", ""), "SMTP server for email reports, e.g. smtp://user:password@smtp.example.com:587")
+		smtpFrom      = flag.String("smtp-from", env("BONESTATS_SMTP_FROM", ""), "From address of email reports, e.g. \"bonestats <stats@example.com>\"")
 		sourceURL     = flag.String("source-url", env("BONESTATS_SOURCE_URL", "https://github.com/yi00it/bonestats"), "where users can get the source code of this version (AGPL-3.0)")
 	)
 	flag.Parse()
@@ -114,6 +117,16 @@ func main() {
 		log.Print("admin password changed: logged out all sessions")
 	}
 
+	var mailer *report.SMTP
+	if *smtpURL != "" || *smtpFrom != "" {
+		if *smtpURL == "" || *smtpFrom == "" {
+			log.Fatal("email reports need both BONESTATS_SMTP_URL and BONESTATS_SMTP_FROM")
+		}
+		if mailer, err = report.NewSMTP(*smtpURL, *smtpFrom); err != nil {
+			log.Fatalf("email reports: %v", err)
+		}
+	}
+
 	collector := &collect.Collector{Store: st, Geo: geo, Location: loc, ProxyHeader: *proxyHeader, RateLimit: *eventRate, IgnorePrivacySignals: *ignoreSignals}
 	srv := &web.Server{
 		Store:       st,
@@ -128,6 +141,9 @@ func main() {
 		ImportDir:   filepath.Dir(*dbPath),
 
 		IgnorePrivacySignals: *ignoreSignals,
+	}
+	if mailer != nil {
+		srv.Mailer, srv.MailFrom = mailer, *smtpFrom
 	}
 	httpServer := &http.Server{
 		Addr:              *addr,
@@ -144,9 +160,16 @@ func main() {
 		go pruneLoop(ctx, st, time.Duration(*retention)*24*time.Hour)
 	}
 	go saltLoop(ctx, collector)
+	if mailer != nil {
+		go report.Run(ctx, st, mailer, loc)
+	}
 
 	go func() {
-		log.Printf("bonestats listening on %s (geoip: %v, retention: %d days)", *addr, geo.Enabled(), *retention)
+		reports := "off"
+		if mailer != nil {
+			reports = "via " + mailer.Server()
+		}
+		log.Printf("bonestats listening on %s (geoip: %v, retention: %d days, email reports: %s)", *addr, geo.Enabled(), *retention, reports)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
 		}
