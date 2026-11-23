@@ -199,6 +199,16 @@ CREATE TABLE IF NOT EXISTS imported (
 CREATE INDEX IF NOT EXISTS imported_site_dim_ts ON imported(site_id, dim, ts);
 CREATE INDEX IF NOT EXISTS imported_import ON imported(import_id);
 
+-- Shared links: a secret URL that shows one site's dashboard without a
+-- login, read-only.
+CREATE TABLE IF NOT EXISTS shares (
+	id         INTEGER PRIMARY KEY,
+	site_id    INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	token      TEXT NOT NULL UNIQUE,
+	name       TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+);
+
 -- Keys for the stats API: sha256 of the key, so a leaked database can't be
 -- used to read the stats. prefix is the start of the key, to tell keys apart.
 CREATE TABLE IF NOT EXISTS api_keys (

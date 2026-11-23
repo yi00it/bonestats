@@ -33,7 +33,7 @@ function filterURL(dim, value) {
   var p = new URLSearchParams(location.search), keep = p.getAll("f").filter(function (f) { return f.split("|")[0] !== dim; });
   p.delete("f");
   keep.concat(dim + "|is|" + value).forEach(function (f) { p.append("f", f); });
-  return "/?" + p.toString();
+  return location.pathname + "?" + p.toString();
 }
 
 function hex(c) {
@@ -317,7 +317,7 @@ document.addEventListener("click", function (e) {
     if (link) { remember(); location.href = link.href; }
     return;
   }
-  var a = e.target.closest("main[data-live] a[href^='/?']");
+  var a = e.target.closest("main[data-live] a[href^='" + location.pathname + "?']");
   if (a && !a.closest(".hero")) remember();
 });
 

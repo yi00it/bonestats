@@ -76,6 +76,11 @@ type Server struct {
 	// login, keys are looked up in Store.
 	AuthenticateAPI func(r *http.Request, key string) (*store.Store, bool)
 
+	// ResolveShare finds the store holding a shared link's token, for hosts
+	// that set Authenticate. Without it, such hosts serve no shared links.
+	// With the built-in login, links are looked up in Store.
+	ResolveShare func(r *http.Request, token string) (*store.Store, bool)
+
 	// ImportDir holds uploads while they are imported; empty means the
 	// system's temporary directory.
 	ImportDir string
@@ -103,7 +108,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	s.tmpl = map[string]*template.Template{}
-	for _, page := range []string{"dashboard", "sites", "goals", "imports", "login"} {
+	for _, page := range []string{"dashboard", "sites", "goals", "imports", "shares", "login"} {
 		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }, "links": func() []Link { return s.Links }}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
@@ -140,6 +145,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /sites/{id}/funnels", form(s.auth(s.addFunnel)))
 	mux.Handle("POST /sites/{id}/funnels/{fid}/delete", form(s.auth(s.deleteFunnel)))
 	mux.Handle("GET /export", s.auth(s.export))
+	if s.sharesEnabled() {
+		mux.HandleFunc("GET /share/{token}", s.sharedDashboard)
+		mux.Handle("GET /sites/{id}/share", s.auth(s.sharesPage))
+		mux.Handle("POST /sites/{id}/shares", form(s.auth(s.addShare)))
+		mux.Handle("POST /sites/{id}/shares/{sid}/delete", form(s.auth(s.deleteShare)))
+	}
 	mux.Handle("GET /sites/{id}/import", s.auth(s.importsPage))
 	mux.Handle("POST /sites/{id}/import", csrf.Handler(s.auth(s.uploadImport)))
 	mux.Handle("POST /sites/{id}/imports/{iid}/delete", form(s.auth(s.deleteImport)))
@@ -313,6 +324,7 @@ var errorMessages = map[string]string{
 	"funnel-name":  "A funnel needs a name of at most 100 characters.",
 	"funnel-steps": "A funnel needs 2 to 8 steps.",
 	"api-key-name": "An API key needs a name of at most 100 characters.",
+	"share-name":   "A shared link needs a name of at most 100 characters.",
 	"failed":       "That didn't work. The server log has the details.",
 }
 
@@ -322,7 +334,7 @@ func errorCode(err error) string {
 		"domain": store.ErrInvalidDomain, "goal-kind": store.ErrGoalKind, "event-name": store.ErrEventName,
 		"goal-path": store.ErrGoalPath, "currency": store.ErrCurrency,
 		"funnel-name": store.ErrFunnelName, "funnel-steps": store.ErrFunnelSteps,
-		"api-key-name": store.ErrAPIKeyName,
+		"api-key-name": store.ErrAPIKeyName, "share-name": store.ErrShareName,
 	} {
 		if errors.Is(err, e) {
 			return code
@@ -373,6 +385,7 @@ func (s *Server) renderSites(w http.ResponseWriter, r *http.Request, newKey stri
 		"Retention":            s.Retention,
 		"IgnorePrivacySignals": s.IgnorePrivacySignals,
 		"APIEnabled":           s.apiEnabled(),
+		"SharesEnabled":        s.sharesEnabled(),
 		"APIKeys":              keys,
 		"NewKey":               newKey,
 	})

@@ -6,17 +6,19 @@
 {{end}}
 
 {{define "content"}}
-{{template "nav" .}}
+{{if .Shared}}{{template "sharednav" .}}{{else}}{{template "nav" .}}{{end}}
 <main class="dash" data-live>
   <section class="hero">
-    <form class="toolbar" method="get" action="/">
+    <form class="toolbar" method="get" action="{{.Nav.Base}}">
       {{range .Nav.Hidden "site" "range" "from" "to" "compare"}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
       <div class="title-row">
-        <label class="site-pick">
+        <label class="site-pick{{if .Shared}} single{{end}}">
           <h1>{{.Site.Domain}}</h1>
+          {{if not .Shared}}
           <select name="site" aria-label="Site" data-autosubmit>
             {{range .Sites}}<option value="{{.Domain}}" {{if eq .ID $.Site.ID}}selected{{end}}>{{.Domain}}</option>{{end}}
           </select>
+          {{end}}
         </label>
         <span class="live" title="Live: visitors active in the last few minutes"><i></i><b data-tween="live">{{.Current}}</b><span>online</span></span>
       </div>
@@ -64,7 +66,7 @@
         </div>
       </div>
     </form>
-    <form id="filter-form" method="get" action="/">
+    <form id="filter-form" method="get" action="{{.Nav.Base}}">
       {{range .Nav.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
     </form>
   </section>
@@ -135,7 +137,7 @@
             {{end}}
             </tbody>
           </table>
-          {{else}}<p class="empty">No goals yet. <a href="/sites/{{.Site.ID}}/goals">Set up goals</a> to see conversion rates.</p>{{end}}
+          {{else}}<p class="empty">No goals yet.{{if not .Shared}} <a href="/sites/{{.Site.ID}}/goals">Set up goals</a> to see conversion rates.{{end}}</p>{{end}}
         </div>
         <div class="panel">
           {{if .Events}}
@@ -226,7 +228,7 @@
 
   <footer>
     {{template "mark"}}
-    <p><a href="{{.ExportURL}}" download>Export this view as CSV</a></p>
+    {{if .Shared}}<p>A shared view of {{.Site.Domain}}'s statistics.</p>{{else}}<p><a href="{{.ExportURL}}" download>Export this view as CSV</a></p>{{end}}
     {{if .MultiDay}}<p>Visitors are counted per day without cookies, so someone who returns on a different day is counted again.</p>{{end}}
     {{if .GeoEnabled}}<p><a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></p>{{end}}
     {{template "source"}}

@@ -22,6 +22,7 @@
       <div class="actions">
         <a href="/sites/{{.ID}}/goals">Goals &amp; funnels</a>
         <a href="/sites/{{.ID}}/import">Import</a>
+        {{if $.SharesEnabled}}<a href="/sites/{{.ID}}/share">Share</a>{{end}}
         <form method="post" action="/sites/{{.ID}}/delete" data-confirm="Delete {{.Domain}} and ALL of its statistics? This cannot be undone.">
           <button class="danger">Delete</button>
         </form>
