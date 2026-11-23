@@ -21,7 +21,19 @@ import (
 // ---- links that keep the dashboard state ----
 
 // nav builds dashboard URLs that keep the current site, range, filters, etc.
-type nav struct{ v url.Values }
+// base is the dashboard's path: "/" or a shared link's.
+type nav struct {
+	v    url.Values
+	base string
+}
+
+// Base is the path that the dashboard's forms submit to.
+func (n nav) Base() string {
+	if n.base == "" {
+		return "/"
+	}
+	return n.base
+}
 
 func (n nav) with(mod func(url.Values)) string {
 	v := url.Values{}
@@ -29,7 +41,7 @@ func (n nav) with(mod func(url.Values)) string {
 		v[k] = append([]string{}, vs...)
 	}
 	mod(v)
-	return "/?" + v.Encode()
+	return n.Base() + "?" + v.Encode()
 }
 
 // Set returns the current URL with one parameter replaced ("" removes it).
@@ -204,9 +216,25 @@ type chip struct {
 var opLabels = map[string]string{store.OpIs: "is", store.OpIsNot: "is not", store.OpContains: "contains"}
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	s.renderDashboard(w, r, s.store(r), nil)
+}
+
+// shared is the view of a shared link: one site, read-only.
+type shared struct {
+	site  store.Site
+	token string
+}
+
+// renderDashboard serves the dashboard, or with sh, a shared link's
+// read-only view of one site.
+func (s *Server) renderDashboard(w http.ResponseWriter, r *http.Request, st *store.Store, sh *shared) {
 	ctx := r.Context()
-	st := s.store(r)
 	qs := r.URL.Query()
+	base := "/"
+	if sh != nil {
+		base = "/share/" + sh.token
+		qs.Set("site", sh.site.Domain)
+	}
 
 	// The "add filter" form submits fdim/fop/fval; fold them into f and redirect.
 	if dim := qs.Get("fdim"); dim != "" {
@@ -216,7 +244,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		qs.Del("fdim")
 		qs.Del("fop")
 		qs.Del("fval")
-		http.Redirect(w, r, "/?"+qs.Encode(), http.StatusSeeOther)
+		http.Redirect(w, r, base+"?"+qs.Encode(), http.StatusSeeOther)
 		return
 	}
 
@@ -230,8 +258,15 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qs = v.qs
-	n := nav{qs}
+	n := nav{qs, base}
 	sites, site, goals, funnels, now := v.sites, v.site, v.goals, v.funnels, v.now
+	if sh != nil {
+		if site.ID != sh.site.ID {
+			http.NotFound(w, r) // the site was deleted
+			return
+		}
+		sites = []store.Site{site}
+	}
 	from, to, label, q := v.from, v.to, v.label, v.q
 	iv := interval(from, to)
 
@@ -452,6 +487,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		"MultiDay":        to.Sub(from) > 24*time.Hour,
 		"ExportURL":       "/export?" + qs.Encode(),
 		"ImportedLeftOut": importedLeftOut,
+		"Shared":          sh != nil,
 	})
 }
 

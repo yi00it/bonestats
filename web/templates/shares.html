@@ -1,0 +1,31 @@
+{{define "head"}}<script defer src="{{static "app.js"}}"></script>{{end}}
+
+{{define "content"}}
+{{template "nav" .}}
+<main class="narrow">
+  <p class="crumbs"><a href="/sites">Sites</a> / <a href="/?site={{.Site.Domain}}">{{.Site.Domain}}</a></p>
+  <h1>Share</h1>
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+
+  <section class="card">
+    <h2>Shared links</h2>
+    <p>Anyone with a shared link can see this site's dashboard, with every date range and filter, without logging in. They can't see other sites or change anything. Delete a link to turn it off.</p>
+    {{range .Shares}}
+    <div class="share">
+      <div class="share-head">
+        <b>{{.Name}}</b> <small>created {{.CreatedAt.Format "Jan 2, 2006"}}</small>
+        <form method="post" action="/sites/{{$.Site.ID}}/shares/{{.ID}}/delete" data-confirm="Delete the shared link “{{.Name}}”? It stops working for everyone who has it.">
+          <button class="danger">Delete</button>
+        </form>
+      </div>
+      <pre><code>{{$.BaseURL}}/share/{{.Token}}</code></pre>
+    </div>
+    {{else}}<p class="empty">No shared links yet.</p>{{end}}
+    <form method="post" action="/sites/{{.Site.ID}}/shares" class="key-form">
+      <input name="name" placeholder="Link name, e.g. Team or Public" aria-label="Link name" maxlength="100" required>
+      <button type="submit">Create link</button>
+    </form>
+  </section>
+  <footer>{{template "source"}}</footer>
+</main>
+{{end}}

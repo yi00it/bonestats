@@ -196,7 +196,7 @@ func TestVitalPos(t *testing.T) {
 
 func TestNav(t *testing.T) {
 	v := url.Values{"site": {"example.com"}, "range": {"7d"}, "f": {"country|is|DE", "page|contains|/blog"}}
-	n := nav{v}
+	n := nav{v: v}
 	parse := func(link string) url.Values {
 		t.Helper()
 		if !strings.HasPrefix(link, "/?") {

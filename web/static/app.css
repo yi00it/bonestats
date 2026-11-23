@@ -146,6 +146,10 @@ input:focus, select:focus { outline: 0; border-color: var(--led); box-shadow: 0 
   border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(45deg);
 }
 .site-pick:hover::after { border-color: var(--led); }
+/* a shared link shows one site: nothing to pick */
+.site-pick.single { cursor: default; }
+.site-pick.single::after { display: none; }
+.site-pick.single:hover h1 { color: inherit; text-shadow: none; }
 .select select option { color: var(--ink); background: var(--panel); text-transform: none; }
 
 .live {
@@ -504,3 +508,8 @@ ul { padding-left: 20px; } li { margin: 4px 0; }
 #api .list td:last-child { text-align: right; }
 .new-key { border: 1px solid var(--led); border-radius: 8px; padding: 4px 14px; margin: 14px 0; }
 .new-key pre { white-space: pre-wrap; word-break: break-all; }
+.share { border-top: 1px solid var(--hair); padding: 12px 0 2px; }
+.share-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.share-head small { color: var(--muted); }
+.share-head form { margin: 0 0 0 auto; }
+.share pre { white-space: pre-wrap; word-break: break-all; }
