@@ -1,12 +1,12 @@
 {{define "content"}}
 <main class="login">
-  <form method="post" action="/login" class="card">
+  <form method="post" action="{{or .Action "/login"}}" class="card">
     <h1 class="logo">{{template "mark"}}<span class="wordmark">bonestats</span></h1>
-    <p class="tagline">Analytics, down to the bone</p>
+    <p class="tagline">{{or .Tagline "Analytics, down to the bone"}}</p>
     {{with .Error}}<p class="error">{{.}}</p>{{end}}
-    <label for="password">Admin password</label>
+    <label for="password">{{or .Label "Admin password"}}</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-    <button type="submit">Log in</button>
+    <button type="submit">{{or .Button "Log in"}}</button>
   </form>
   <footer>{{template "source"}}</footer>
 </main>

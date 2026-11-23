@@ -89,9 +89,10 @@ type Server struct {
 	// host's account page.
 	Links []Link
 
-	tmpl      map[string]*template.Template
-	limiter   limiter
-	proxyWarn sync.Once
+	tmpl         map[string]*template.Template
+	limiter      limiter
+	shareLimiter limiter // shared link passwords
+	proxyWarn    sync.Once
 }
 
 // Link is an entry in the header navigation.
@@ -147,6 +148,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /export", s.auth(s.export))
 	if s.sharesEnabled() {
 		mux.HandleFunc("GET /share/{token}", s.sharedDashboard)
+		mux.Handle("POST /share/{token}", form(http.HandlerFunc(s.unlockShare)))
+		mux.Handle("POST /sites/{id}/shares/{sid}/password", form(s.auth(s.setSharePassword)))
 		mux.Handle("GET /sites/{id}/share", s.auth(s.sharesPage))
 		mux.Handle("POST /sites/{id}/shares", form(s.auth(s.addShare)))
 		mux.Handle("POST /sites/{id}/shares/{sid}/delete", form(s.auth(s.deleteShare)))
@@ -315,17 +318,18 @@ func (s *Server) cookie(r *http.Request, value string, maxAge int) *http.Cookie 
 // Messages for the ?error= codes of the sites and goals pages. Only these
 // fixed texts can be shown, so a crafted link can't put words in the UI.
 var errorMessages = map[string]string{
-	"exists":       "That already exists.",
-	"domain":       "Enter a valid domain such as example.com (internationalized domains in their xn-- form).",
-	"goal-kind":    store.ErrGoalKind.Error() + ".",
-	"event-name":   "The event name is too long.",
-	"goal-path":    "Page paths start with / and are at most 512 characters.",
-	"currency":     "Revenue needs a 3-letter currency code and an event goal.",
-	"funnel-name":  "A funnel needs a name of at most 100 characters.",
-	"funnel-steps": "A funnel needs 2 to 8 steps.",
-	"api-key-name": "An API key needs a name of at most 100 characters.",
-	"share-name":   "A shared link needs a name of at most 100 characters.",
-	"failed":       "That didn't work. The server log has the details.",
+	"exists":         "That already exists.",
+	"domain":         "Enter a valid domain such as example.com (internationalized domains in their xn-- form).",
+	"goal-kind":      store.ErrGoalKind.Error() + ".",
+	"event-name":     "The event name is too long.",
+	"goal-path":      "Page paths start with / and are at most 512 characters.",
+	"currency":       "Revenue needs a 3-letter currency code and an event goal.",
+	"funnel-name":    "A funnel needs a name of at most 100 characters.",
+	"funnel-steps":   "A funnel needs 2 to 8 steps.",
+	"api-key-name":   "An API key needs a name of at most 100 characters.",
+	"share-name":     "A shared link needs a name of at most 100 characters.",
+	"share-password": "A shared link's password needs 8 to 200 characters.",
+	"failed":         "That didn't work. The server log has the details.",
 }
 
 // errorCode maps an error from the store to one of errorMessages.

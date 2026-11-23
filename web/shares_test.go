@@ -141,3 +141,139 @@ func TestSharedLinksWithHostLogin(t *testing.T) {
 		t.Errorf("unknown host link: %d", w.Code)
 	}
 }
+
+func TestSharePasswordHash(t *testing.T) {
+	sharePasswordIter = 1000
+	h, err := hashSharePassword("correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, _ := hashSharePassword("correct horse")
+	if h == h2 || !strings.HasPrefix(h, "pbkdf2-sha256$1000$") {
+		t.Errorf("hashes %q %q", h, h2)
+	}
+	for pw, want := range map[string]bool{"correct horse": true, "correct horsE": false, "": false} {
+		if checkSharePassword(h, pw) != want {
+			t.Errorf("check(%q) != %v", pw, want)
+		}
+	}
+	for _, bad := range []string{"", "x", "pbkdf2-sha256$0$00$00", "md5$1$00$00", "pbkdf2-sha256$10$zz$00"} {
+		if checkSharePassword(bad, "") || checkSharePassword(bad, "x") {
+			t.Errorf("malformed hash %q accepted", bad)
+		}
+	}
+}
+
+func TestSharedLinkPassword(t *testing.T) {
+	sharePasswordIter = 1000
+	s, get := dashboardClient(t)
+	site := addSite(t, s, "shared.example")
+	record(t, s, store.Event{SiteID: site.ID, Time: time.Now().Add(-time.Minute), Visitor: 1, Name: "pageview", Path: "/secret-page", Visit: store.Visit{Channel: "Direct"}})
+	h := s.Handler()
+	c := sessionCookie(t, post(h, "/login", "password="+url.QueryEscape("correct horse")))
+	base := "/sites/" + strconv.FormatInt(site.ID, 10)
+
+	if w := post(h, base+"/shares", "name=Client&password=short", c); !strings.Contains(w.Header().Get("Location"), "error=share-password") {
+		t.Errorf("short password: %q", w.Header().Get("Location"))
+	}
+	if w := post(h, base+"/shares", "name=Client&password="+url.QueryEscape("open sesame"), c); w.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d", w.Code)
+	}
+	shares, _ := s.Store.Shares(context.Background(), site.ID)
+	if len(shares) != 1 || shares[0].Password == "" || strings.Contains(shares[0].Password, "sesame") {
+		t.Fatalf("shares %+v", shares)
+	}
+	link := "/share/" + shares[0].Token
+	if body := get(base + "/share").Body.String(); !strings.Contains(body, "password protected") || !strings.Contains(body, "Remove password") {
+		t.Error("share page doesn't show the password")
+	}
+
+	// Without the password: a password form and nothing else.
+	w := anonGet(h, link)
+	if w.Code != http.StatusUnauthorized || strings.Contains(w.Body.String(), "/secret-page") || !strings.Contains(w.Body.String(), `action="`+link+`"`) {
+		t.Fatalf("locked link: %d", w.Code)
+	}
+	if w := post(h, link, "password=wrong"); w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "Wrong password") {
+		t.Errorf("wrong password: %d", w.Code)
+	}
+	w = post(h, link, "password="+url.QueryEscape("open sesame"))
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != link {
+		t.Fatalf("right password: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	var pass *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == shareCookie {
+			pass = ck
+		}
+	}
+	if pass == nil || pass.Path != link || !pass.HttpOnly || strings.Contains(pass.Value, "sesame") {
+		t.Fatalf("cookie %+v", pass)
+	}
+	view := func(ck *http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", link, nil)
+		r.AddCookie(ck)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := view(pass); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "/secret-page") {
+		t.Errorf("unlocked view: %d", w.Code)
+	}
+	if w := view(&http.Cookie{Name: shareCookie, Value: pass.Value + "0"}); w.Code != http.StatusUnauthorized {
+		t.Errorf("forged cookie: %d", w.Code)
+	}
+
+	// The pass doesn't open another protected link.
+	other, _ := s.Store.AddShare(context.Background(), site.ID, "Other")
+	hash, _ := hashSharePassword("another one")
+	s.Store.SetSharePassword(context.Background(), site.ID, other.ID, hash)
+	r := httptest.NewRequest("GET", "/share/"+other.Token, nil)
+	r.AddCookie(pass)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("pass opened another link: %d", w.Code)
+	}
+
+	// Changing the password locks visitors out again; removing it opens the link.
+	id := strconv.FormatInt(shares[0].ID, 10)
+	if w := post(h, base+"/shares/"+id+"/password", "password="+url.QueryEscape("new secret!"), c); w.Code != http.StatusSeeOther {
+		t.Fatalf("change: %d", w.Code)
+	}
+	if w := view(pass); w.Code != http.StatusUnauthorized {
+		t.Errorf("old pass after password change: %d", w.Code)
+	}
+	if w := post(h, base+"/shares/"+id+"/password", "password=short", c); !strings.Contains(w.Header().Get("Location"), "error=share-password") {
+		t.Errorf("short new password: %q", w.Header().Get("Location"))
+	}
+	if w := post(h, base+"/shares/"+id+"/password", "remove=1", c); w.Code != http.StatusSeeOther {
+		t.Fatalf("remove: %d", w.Code)
+	}
+	if w := anonGet(h, link); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "/secret-page") {
+		t.Errorf("link without password: %d", w.Code)
+	}
+	// Only the admin can change passwords.
+	if w := post(h, base+"/shares/"+id+"/password", "password="+url.QueryEscape("hijacked!!")); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {
+		t.Errorf("anonymous password change: %d %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+// Guessing a link's password has its own limit: the admin can still log in.
+func TestSharePasswordLimit(t *testing.T) {
+	sharePasswordIter = 1000
+	s, h := testServer(t)
+	site := addSite(t, s, "shared.example")
+	sh, _ := s.Store.AddShare(context.Background(), site.ID, "x")
+	hash, _ := hashSharePassword("open sesame")
+	s.Store.SetSharePassword(context.Background(), site.ID, sh.ID, hash)
+	link := "/share/" + sh.Token
+	for i := 0; i < maxFails; i++ {
+		post(h, link, "password=guess"+strconv.Itoa(i))
+	}
+	if w := post(h, link, "password="+url.QueryEscape("open sesame")); w.Code != http.StatusTooManyRequests {
+		t.Errorf("after %d failures: %d", maxFails, w.Code)
+	}
+	if w := post(h, "/login", "password="+url.QueryEscape("correct horse")); w.Code != http.StatusSeeOther {
+		t.Errorf("admin login blocked by share guesses: %d", w.Code)
+	}
+}
