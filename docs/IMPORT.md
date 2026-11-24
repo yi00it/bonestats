@@ -11,7 +11,7 @@ larger number **before** you import.
 
 There are two ways to import:
 
-- **On the dashboard:** Sites → *Import* next to the site, choose the source
+- **On the dashboard:** the site's settings → *Import*, choose the source
   and the file (up to 1 GB). Behind nginx, raise `client_max_body_size` for
   this; Caddy has no limit.
 - **On the command line,** for any size:

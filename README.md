@@ -78,15 +78,15 @@ Custom events, with optional properties and revenue: `bonestats("purchase", {pla
 - **Sources:** channels (Organic Search, Social, Email, Paid, AI…), sources (well-known sites by name, so `google.com` and `google.com.tr` are both Google; visits without one are listed as Direct / None), referrer URLs (host and path, never the query string), and UTM source, medium, campaign, term and content.
 - **Locations:** world map, countries, regions and cities.
 - **Devices:** browser, browser version, OS, OS version, device type and screen size (all major versions and size ranges only).
-- **Goals** (set them up on Sites → Goals & funnels): custom event goals, pageview goals with `*` wildcards, conversion rate and revenue. With a goal filter on, every breakdown shows a CR column.
+- **Goals** (set them up in the site's settings → Goals & funnels): custom event goals, pageview goals with `*` wildcards, conversion rate and revenue. With a goal filter on, every breakdown shows a CR column.
 - **Properties** of custom events, broken down by value (and revenue).
 - **Funnels:** 2 to 8 goals that visitors must complete in order within one visit, with the drop-off at each step.
 - **Web performance:** the 75th percentile of LCP, INP, CLS, FCP and TTFB from real visitors, rated good, needs improvement or poor, overall and per page. It follows the dashboard's filters.
 - **Live:** the dashboard refreshes every 15 seconds while it's open and shows how many visitors are online. Numbers that changed flicker to their new value; open tabs and your scroll position are kept.
-- **Export and API:** download the current view (range and filters included) as a ZIP of CSV files, or read the same numbers from scripts with the read-only [stats API](docs/API.md), using keys you create on the Sites page.
+- **Export and API:** download the current view (range and filters included) as a ZIP of CSV files, or read the same numbers from scripts with the read-only [stats API](docs/API.md), using keys you create on the Settings page.
 - **Import:** bring your history from Plausible (its export ZIP) or Umami (its raw events), on the site's *Import* page or with `bonestats import`. See [docs/IMPORT.md](docs/IMPORT.md).
-- **Shared links:** give anyone a secret link to one site's dashboard (Sites → *Share*). They can pick any range and filter, without logging in and without seeing anything else. Give a link a password to ask for it first. Delete the link to turn it off.
-- **Email reports:** weekly or monthly emails with a site's visitors, top pages, sources, countries and goals, compared with the period before (Sites → *Reports*). Needs an SMTP server, see `BONESTATS_SMTP_URL`. Every email has an unsubscribe link.
+- **Shared links:** give anyone a secret link to one site's dashboard (site settings → *Share*). They can pick any range and filter, without logging in and without seeing anything else. Give a link a password to ask for it first. Delete the link to turn it off.
+- **Email reports:** weekly or monthly emails with a site's visitors, top pages, sources, countries and goals, compared with the period before (site settings → *Reports*). Needs an SMTP server, see `BONESTATS_SMTP_URL`. Every email has an unsubscribe link.
 - **Light and dark:** follows your system setting, or pick one with the switch in the header (remembered in your browser).
 
 ![Funnel and web performance](docs/funnel-vitals.png)
@@ -97,7 +97,7 @@ Add-ons are opt-in via the script name: `bs.outbound.js` tracks clicks to other 
 
 ## Demo data
 
-`make demo` (or `./bonestats demo -replace`) adds a site called `demo.example.com` with 90 days of realistic fake traffic, plus goals and funnels, so you can explore the dashboard before connecting a real site. Options: `-site`, `-days`, `-visitors` (average per day), `-db`, and `-replace` (recreate the site if it already exists). To remove the data, delete the site on the Sites page.
+`make demo` (or `./bonestats demo -replace`) adds a site called `demo.example.com` with 90 days of realistic fake traffic, plus goals and funnels, so you can explore the dashboard before connecting a real site. Options: `-site`, `-days`, `-visitors` (average per day), `-db`, and `-replace` (recreate the site if it already exists). To remove the data, delete the site from its settings (*General* → *Delete site*).
 
 ## Configuration
 

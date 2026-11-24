@@ -37,8 +37,8 @@ func TestReportsPage(t *testing.T) {
 	base := "/sites/" + strconv.FormatInt(site.ID, 10)
 
 	// Without SMTP the page explains how to turn reports on.
-	if body := get("/sites").Body.String(); !strings.Contains(body, `href="`+base+`/reports"`) {
-		t.Error("sites page doesn't link the reports page")
+	if body := get(base + "/settings").Body.String(); !strings.Contains(body, `href="`+base+`/reports"`) {
+		t.Error("site settings don't link the reports page")
 	}
 	if body := get(base + "/reports").Body.String(); !strings.Contains(body, "BONESTATS_SMTP_URL") || strings.Contains(body, `name="email"`) {
 		t.Error("reports page without SMTP")

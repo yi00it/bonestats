@@ -5,7 +5,7 @@ Google Sheets…) and reports. It can't change anything.
 
 ## Keys
 
-Create a key on the **Sites** page, under *Stats API*. The key is shown once,
+Create a key on the **Settings** page, under *Stats API*. The key is shown once,
 right after you create it; bonestats stores only its hash. Revoke a key on the
 same page. A key reads the statistics of every site.
 

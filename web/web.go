@@ -115,8 +115,8 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	s.tmpl = map[string]*template.Template{}
-	for _, page := range []string{"dashboard", "sites", "goals", "imports", "shares", "reports", "unsubscribe", "login"} {
-		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }, "links": func() []Link { return s.Links }}).
+	for _, page := range []string{"dashboard", "sites", "site", "settings", "goals", "imports", "shares", "reports", "unsubscribe", "login"} {
+		s.tmpl[page] = template.Must(template.New("").Funcs(funcs).Funcs(template.FuncMap{"static": staticURL, "source": func() string { return s.SourceURL }, "links": func() []Link { return s.Links }, "sharesOn": s.sharesEnabled, "reportsOn": s.reportsEnabled}).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
 
@@ -144,6 +144,8 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.Handle("GET /{$}", s.auth(s.dashboard))
 	mux.Handle("GET /sites", s.auth(s.sitesPage))
+	mux.Handle("GET /sites/{id}/settings", s.auth(s.siteSettingsPage))
+	mux.Handle("GET /settings", s.auth(s.settingsPage))
 	mux.Handle("POST /sites", form(s.auth(s.addSite)))
 	mux.Handle("POST /sites/{id}/delete", form(s.auth(s.deleteSite)))
 	mux.Handle("GET /sites/{id}/goals", s.auth(s.goalsPage))
@@ -363,94 +365,6 @@ func errorCode(err error) string {
 	}
 	log.Printf("error: %v", err)
 	return "failed"
-}
-
-// ---- sites ----
-
-func (s *Server) sitesPage(w http.ResponseWriter, r *http.Request) {
-	s.renderSites(w, r, "")
-}
-
-// renderSites shows the sites page. newKey is an API key that was just
-// created: the only time it can be shown.
-func (s *Server) renderSites(w http.ResponseWriter, r *http.Request, newKey string) {
-	ctx := r.Context()
-	st := s.store(r)
-	sites, err := st.Sites(ctx)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	var keys []store.APIKey
-	if s.apiEnabled() {
-		if keys, err = st.APIKeys(ctx); err != nil {
-			serverError(w, err)
-			return
-		}
-	}
-	scheme := "http"
-	if https(r) {
-		scheme = "https"
-	}
-	if newKey != "" {
-		w.Header().Set("Cache-Control", "no-store")
-	}
-	s.render(w, "sites", map[string]any{
-		"Title":                "Sites",
-		"Sites":                sites,
-		"BaseURL":              scheme + "://" + r.Host,
-		"Error":                errorMessages[r.URL.Query().Get("error")],
-		"Retention":            s.Retention,
-		"IgnorePrivacySignals": s.IgnorePrivacySignals,
-		"APIEnabled":           s.apiEnabled(),
-		"SharesEnabled":        s.sharesEnabled(),
-		"ReportsEnabled":       s.reportsEnabled(),
-		"APIKeys":              keys,
-		"NewKey":               newKey,
-	})
-}
-
-func (s *Server) addAPIKey(w http.ResponseWriter, r *http.Request) {
-	key, err := s.store(r).AddAPIKey(r.Context(), r.PostFormValue("name"))
-	if err != nil {
-		http.Redirect(w, r, "/sites?error="+errorCode(err)+"#api", http.StatusSeeOther)
-		return
-	}
-	s.renderSites(w, r, key)
-}
-
-func (s *Server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	if err := s.store(r).DeleteAPIKey(r.Context(), id); err != nil {
-		serverError(w, err)
-		return
-	}
-	http.Redirect(w, r, "/sites#api", http.StatusSeeOther)
-}
-
-func (s *Server) addSite(w http.ResponseWriter, r *http.Request) {
-	if err := s.store(r).AddSite(r.Context(), r.PostFormValue("domain")); err != nil {
-		http.Redirect(w, r, "/sites?error="+errorCode(err), http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, "/sites", http.StatusSeeOther)
-}
-
-func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	if err := s.store(r).DeleteSite(r.Context(), id); err != nil {
-		serverError(w, err)
-		return
-	}
-	http.Redirect(w, r, "/sites", http.StatusSeeOther)
 }
 
 // ---- template helpers ----

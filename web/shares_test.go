@@ -34,8 +34,8 @@ func TestSharedLinks(t *testing.T) {
 	c := sessionCookie(t, post(h, "/login", "password="+url.QueryEscape("correct horse")))
 	base := "/sites/" + strconv.FormatInt(site.ID, 10)
 
-	if body := get("/sites").Body.String(); !strings.Contains(body, `href="`+base+`/share"`) {
-		t.Error("sites page doesn't link the share page")
+	if body := get(base + "/settings").Body.String(); !strings.Contains(body, `href="`+base+`/share"`) {
+		t.Error("site settings don't link the share page")
 	}
 	if w := post(h, base+"/shares", "name=", c); !strings.Contains(w.Header().Get("Location"), "error=share-name") {
 		t.Errorf("empty name: %q", w.Header().Get("Location"))
@@ -126,7 +126,7 @@ func TestSharedLinksWithHostLogin(t *testing.T) {
 	if w := anonGet(h, "/share/"+sh.Token); w.Code == http.StatusOK {
 		t.Error("shared link served without ResolveShare")
 	}
-	if strings.Contains(anonGet(h, "/sites").Body.String(), "/share\"") {
+	if strings.Contains(anonGet(h, "/sites/"+strconv.FormatInt(site.ID, 10)+"/settings").Body.String(), "/share\"") {
 		t.Error("share page linked without ResolveShare")
 	}
 
