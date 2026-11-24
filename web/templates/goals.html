@@ -3,8 +3,7 @@
 {{define "content"}}
 {{template "nav" .}}
 <main class="narrow">
-  <p class="crumbs"><a href="/sites">Sites</a> / <a href="/?site={{.Site.Domain}}">{{.Site.Domain}}</a></p>
-  <h1>Goals &amp; funnels</h1>
+  {{template "sitenav" (dict "Site" .Site "Tab" "goals")}}
   {{with .Error}}<p class="error">{{.}}</p>{{end}}
 
   <section class="card">

@@ -298,7 +298,7 @@ func TestAPIWithHostLogin(t *testing.T) {
 	if w := apiGet(h, "/api/v1/sites", "bs_anything"); w.Code != http.StatusNotFound {
 		t.Errorf("API served without AuthenticateAPI: %d", w.Code)
 	}
-	if body := apiGet(h, "/sites", "").Body.String(); strings.Contains(body, "Stats API") {
+	if body := apiGet(h, "/settings", "").Body.String(); strings.Contains(body, "Stats API") {
 		t.Error("API keys shown without AuthenticateAPI")
 	}
 
@@ -336,9 +336,9 @@ func TestAPIKeyPages(t *testing.T) {
 	if w := apiGet(h, "/api/v1/sites", key); w.Code != http.StatusOK {
 		t.Errorf("new key: status %d", w.Code)
 	}
-	body := get("/sites").Body.String()
+	body := get("/settings").Body.String()
 	if strings.Contains(body, key) || !strings.Contains(body, key[:9]+"…") || !strings.Contains(body, "Grafana") {
-		t.Error("sites page should list the key by its prefix only")
+		t.Error("settings page should list the key by its prefix only")
 	}
 	if w := post(h, "/api-keys", "name=", c); w.Code != http.StatusSeeOther || !strings.Contains(w.Header().Get("Location"), "error=api-key-name") {
 		t.Errorf("empty name: %d %q", w.Code, w.Header().Get("Location"))

@@ -72,15 +72,11 @@ func (s *Server) sharesPage(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	scheme := "http"
-	if https(r) {
-		scheme = "https"
-	}
 	s.render(w, "shares", map[string]any{
 		"Title":   "Share · " + site.Domain,
 		"Site":    site,
 		"Shares":  shares,
-		"BaseURL": scheme + "://" + r.Host,
+		"BaseURL": baseURL(r),
 		"Error":   errorMessages[r.URL.Query().Get("error")],
 	})
 }

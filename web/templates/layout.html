@@ -32,6 +32,7 @@
   <a href="/" class="home" aria-label="bonestats dashboard">{{template "logo"}}</a>
   <nav>
     <a href="/sites">Sites</a>
+    <a href="/settings">Settings</a>
     {{range links}}<a href="{{.URL}}">{{.Label}}</a>{{end}}
     <form method="post" action="/logout"><button class="link">Log out</button></form>
     <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch between light and dark mode" title="Light / dark">
@@ -40,6 +41,20 @@
     </button>
   </nav>
 </header>
+{{end}}
+
+{{/* The heading and tabs of a site's settings pages. Takes Site and Tab. */}}
+{{define "sitenav"}}
+<p class="crumbs"><a href="/sites">Sites</a> / <a href="/?site={{.Site.Domain}}">Dashboard</a></p>
+<h1 class="site-title">{{.Site.Domain}}</h1>
+<nav class="subnav" aria-label="Site settings">
+  {{$t := .Tab}}
+  <a href="/sites/{{.Site.ID}}/settings"{{if eq $t "general"}} aria-current="page"{{end}}>General</a>
+  <a href="/sites/{{.Site.ID}}/goals"{{if eq $t "goals"}} aria-current="page"{{end}}>Goals &amp; funnels</a>
+  {{if sharesOn}}<a href="/sites/{{.Site.ID}}/share"{{if eq $t "share"}} aria-current="page"{{end}}>Share</a>{{end}}
+  {{if reportsOn}}<a href="/sites/{{.Site.ID}}/reports"{{if eq $t "reports"}} aria-current="page"{{end}}>Reports</a>{{end}}
+  <a href="/sites/{{.Site.ID}}/import"{{if eq $t "import"}} aria-current="page"{{end}}>Import</a>
+</nav>
 {{end}}
 
 {{/* The header of a shared link: no way into the admin pages. */}}

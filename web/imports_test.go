@@ -56,8 +56,8 @@ func TestImportPage(t *testing.T) {
 	if w := get(base + "/import"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Nothing imported yet") {
 		t.Fatalf("import page: %d", w.Code)
 	}
-	if w := get("/sites"); !strings.Contains(w.Body.String(), `href="`+base+`/import"`) {
-		t.Error("sites page doesn't link the import page")
+	if w := get(base + "/settings"); !strings.Contains(w.Body.String(), `href="`+base+`/import"`) {
+		t.Error("site settings don't link the import page")
 	}
 
 	day := time.Now().AddDate(0, 0, -3).Format(dateLayout)
